@@ -4,16 +4,34 @@ function getToken() {
   return localStorage.getItem('bos_token');
 }
 
+function getUserKey() {
+  return 'bos_user';
+}
+
 export function setToken(token) {
   localStorage.setItem('bos_token', token);
 }
 
 export function clearToken() {
   localStorage.removeItem('bos_token');
+  localStorage.removeItem(getUserKey());
 }
 
 export function isAuthenticated() {
   return !!getToken();
+}
+
+export function setStoredUser(user) {
+  localStorage.setItem(getUserKey(), JSON.stringify(user));
+}
+
+export function getStoredUser() {
+  try {
+    const raw = localStorage.getItem(getUserKey());
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function api(path, options = {}) {

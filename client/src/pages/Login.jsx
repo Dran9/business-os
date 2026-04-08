@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 
 export default function Login({ onLogin, loading, error }) {
+  const [username, setUsername] = useState('owner')
   const [digits, setDigits] = useState(['', '', '', ''])
   const inputRefs = [useRef(), useRef(), useRef(), useRef()]
 
@@ -24,7 +25,7 @@ export default function Login({ onLogin, loading, error }) {
     if (digit && index === 3) {
       const pin = next.join('')
       if (pin.length === 4) {
-        onLogin(pin)
+        onLogin({ username, pin })
       }
     }
   }
@@ -40,7 +41,7 @@ export default function Login({ onLogin, loading, error }) {
     const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4)
     if (pasted.length === 4) {
       setDigits(pasted.split(''))
-      onLogin(pasted)
+      onLogin({ username, pin: pasted })
     }
   }
 
@@ -48,9 +49,21 @@ export default function Login({ onLogin, loading, error }) {
     <div className="login-container">
       <div className="login-form">
         <h1 className="login-title">Business OS</h1>
-        <p className="login-subtitle">Ingresa tu PIN</p>
+        <p className="login-subtitle">Ingresa tu usuario y PIN</p>
 
         {error && <div className="login-error">{error}</div>}
+
+        <div className="form-group">
+          <label>Usuario</label>
+          <input
+            className="input"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            disabled={loading}
+          />
+        </div>
 
         <div className="pin-inputs">
           {digits.map((d, i) => (

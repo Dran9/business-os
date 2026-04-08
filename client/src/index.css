@@ -492,6 +492,8 @@ body {
 .font-bold { font-weight: 700; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-full { width: 100%; }
+.positive { color: var(--color-success); }
+.negative { color: var(--color-danger); }
 
 /* --- LOGIN --- */
 .login-container {
@@ -651,6 +653,26 @@ body {
 .sidebar-footer {
   padding: var(--space-2);
   border-top: 1px solid var(--color-border);
+}
+
+.sidebar-user {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
+}
+
+.sidebar-user-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sidebar-user-role {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
 }
 
 /* --- PAGE TITLE --- */

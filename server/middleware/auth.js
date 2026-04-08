@@ -18,7 +18,7 @@ function authMiddleware(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
-    req.tenantId = decoded.tenantId || 1; // default tenant para Daniel
+    req.tenantId = decoded.tenantId || 1; // instalación actual: un tenant por instancia
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Token inválido o expirado' });

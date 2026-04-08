@@ -71,4 +71,41 @@ router.get('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) =
   }
 });
 
+router.put('/:id/assign', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    if (!['owner', 'admin'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'No tienes permiso para asignar conversaciones' });
+    }
+
+    const { assigned_to } = req.body;
+    const convs = await query(
+      'SELECT id FROM conversations WHERE id = ? AND tenant_id = ?',
+      [req.params.id, req.tenantId]
+    );
+    if (convs.length === 0) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    if (assigned_to) {
+      const users = await query(
+        'SELECT username FROM admin_users WHERE tenant_id = ? AND username = ? AND active = TRUE LIMIT 1',
+        [req.tenantId, assigned_to]
+      );
+      if (users.length === 0) {
+        return res.status(400).json({ error: 'Usuario inválido para asignación' });
+      }
+    }
+
+    await query(
+      'UPDATE conversations SET assigned_to = ? WHERE id = ? AND tenant_id = ?',
+      [assigned_to || 'bot', req.params.id, req.tenantId]
+    );
+
+    res.json({ message: 'Conversación asignada' });
+  } catch (err) {
+    console.error('[conversations assign]', err);
+    res.status(500).json({ error: 'Error asignando conversación' });
+  }
+});
+
 module.exports = router;

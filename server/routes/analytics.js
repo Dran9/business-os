@@ -65,4 +65,52 @@ router.get('/dashboard', authMiddleware, tenantMiddleware, async (req, res) => {
   }
 });
 
+router.get('/funnel', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const tid = req.tenantId;
+
+    const [totalLeads] = await query(
+      'SELECT COUNT(*) AS c FROM leads WHERE tenant_id = ?',
+      [tid]
+    );
+
+    const statuses = await query(
+      'SELECT status, COUNT(*) AS c FROM leads WHERE tenant_id = ? GROUP BY status',
+      [tid]
+    );
+
+    const sources = await query(
+      `SELECT COALESCE(source, 'sin_fuente') AS source, COUNT(*) AS total
+       FROM leads
+       WHERE tenant_id = ?
+       GROUP BY COALESCE(source, 'sin_fuente')
+       ORDER BY total DESC
+       LIMIT 6`,
+      [tid]
+    );
+
+    const byStatus = Object.fromEntries(statuses.map((row) => [row.status, Number(row.c)]));
+    const total = Number(totalLeads?.c || 0);
+    const qualified = (byStatus.qualifying || 0) + (byStatus.qualified || 0) + (byStatus.negotiating || 0) + (byStatus.converted || 0);
+    const negotiating = byStatus.negotiating || 0;
+    const converted = byStatus.converted || 0;
+    const lost = byStatus.lost || 0;
+
+    res.json({
+      total,
+      qualified,
+      negotiating,
+      converted,
+      lost,
+      conversion_rate: total > 0 ? Math.round((converted / total) * 100) : 0,
+      loss_rate: total > 0 ? Math.round((lost / total) * 100) : 0,
+      top_sources: sources.map((row) => ({ source: row.source, total: Number(row.total) })),
+      by_status: byStatus,
+    });
+  } catch (err) {
+    console.error('[analytics/funnel]', err);
+    res.status(500).json({ error: 'Error cargando funnel' });
+  }
+});
+
 module.exports = router;

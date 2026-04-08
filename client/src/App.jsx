@@ -20,7 +20,7 @@ function PageLoader() {
 }
 
 export default function App() {
-  const { authed, login, logout, loading, error } = useAuth()
+  const { authed, user, login, logout, loading, error } = useAuth()
   const { theme, toggleTheme } = useTheme()
 
   if (!authed) {
@@ -35,7 +35,7 @@ export default function App() {
     <BrowserRouter>
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route element={<AdminLayout onLogout={logout} theme={theme} onToggleTheme={toggleTheme} />}>
+          <Route element={<AdminLayout onLogout={logout} theme={theme} onToggleTheme={toggleTheme} currentUser={user} />}>
             <Route index element={<Dashboard />} />
             <Route path="conversations" element={<Conversations />} />
             <Route path="leads" element={<Leads />} />
@@ -43,7 +43,7 @@ export default function App() {
             <Route path="finance" element={<Finance />} />
             <Route path="marketing" element={<Marketing />} />
             <Route path="insights" element={<Insights />} />
-            <Route path="settings" element={<Settings />} />
+            <Route path="settings" element={<Settings currentUser={user} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

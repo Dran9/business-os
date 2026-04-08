@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import Sidebar, { Icon } from './Sidebar'
 
-export default function AdminLayout({ onLogout, theme, onToggleTheme }) {
+export default function AdminLayout({ onLogout, theme, onToggleTheme, currentUser }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
@@ -13,6 +13,7 @@ export default function AdminLayout({ onLogout, theme, onToggleTheme }) {
         onLogout={onLogout}
         theme={theme}
         onToggleTheme={onToggleTheme}
+        currentUser={currentUser}
       />
       <div className="main-content">
         <header className="page-header">

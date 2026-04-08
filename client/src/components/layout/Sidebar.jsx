@@ -39,7 +39,7 @@ function Icon({ name, size = 20 }) {
 
 export { Icon }
 
-export default function Sidebar({ open, onClose, onLogout, theme, onToggleTheme }) {
+export default function Sidebar({ open, onClose, onLogout, theme, onToggleTheme, currentUser }) {
   return (
     <>
       {/* Overlay mobile */}
@@ -74,6 +74,12 @@ export default function Sidebar({ open, onClose, onLogout, theme, onToggleTheme 
 
         {/* Footer */}
         <div className="sidebar-footer">
+          {currentUser && (
+            <div className="sidebar-user">
+              <div className="sidebar-user-name">{currentUser.display_name || currentUser.username}</div>
+              <div className="sidebar-user-role">{currentUser.role}</div>
+            </div>
+          )}
           <button type="button" className="sidebar-link" onClick={onToggleTheme}>
             <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
             <span>{theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}</span>

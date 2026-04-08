@@ -107,8 +107,10 @@ async function initializeDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         tenant_id INT NOT NULL,
         username VARCHAR(100) NOT NULL,
+        display_name VARCHAR(200),
         password_hash VARCHAR(255) NOT NULL,
         role ENUM('owner','admin','viewer') DEFAULT 'admin',
+        active BOOLEAN DEFAULT TRUE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY (tenant_id, username),
         FOREIGN KEY (tenant_id) REFERENCES tenants(id)
@@ -466,12 +468,18 @@ async function initializeDatabase() {
       const [t] = await conn.execute('SELECT id FROM tenants LIMIT 1');
       if (t.length > 0) {
         await conn.execute(
-          'INSERT INTO admin_users (tenant_id, username, password_hash, role) VALUES (?, ?, ?, ?)',
-          [t[0].id, 'owner', '$2a$12$YC/nDqc79w9PcdVTBr8c0.Tp5WzyQiqSLLnZ7btwb4RLmoEBRmCb.', 'owner']
+          'INSERT INTO admin_users (tenant_id, username, display_name, password_hash, role, active) VALUES (?, ?, ?, ?, ?, TRUE)',
+          [t[0].id, 'owner', 'Daniel', '$2a$12$YC/nDqc79w9PcdVTBr8c0.Tp5WzyQiqSLLnZ7btwb4RLmoEBRmCb.', 'owner']
         );
         console.log('[DB] Admin creado con PIN por defecto');
       }
     }
+
+    await conn.execute('ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS display_name VARCHAR(200)').catch(() => {});
+    await conn.execute('ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
+    await conn.execute(
+      "UPDATE admin_users SET display_name = 'Daniel' WHERE username = 'owner' AND (display_name IS NULL OR display_name = '')"
+    ).catch(() => {});
 
     console.log('[DB] Schema inicializado correctamente');
   } finally {

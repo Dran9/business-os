@@ -176,3 +176,212 @@ Path: `/Users/dran/Documents/Codex openai/agenda4.0/`
 - Los webhooks de Meta/WhatsApp están en agenda.danielmaclean.com — NO mover
 - Para cambios frontend: editar src/, `cd client && npm run build`, commitear dist/, push
 - Env vars en hPanel: DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET, TELEGRAM_BOT_TOKEN, PORT, NODE_ENV
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 2 (completada)
+
+### Resumen
+Se integró una primera capa real de IA y análisis sobre el chatbot, se habilitó Finanzas como módulo funcional y se activó Insights con embudo comercial. También se aclaró la dirección de producto: aunque el schema conserva `tenant_id`, la estrategia actual es **single-tenant por instalación** con pocos usuarios internos por negocio, no SaaS multi-tenant.
+
+### Lo implementado en esta sesión
+1. **Groq en el chatbot**
+   - Nuevo archivo: `server/services/chatbot/llm.js`
+   - Modelo: `llama-3.3-70b-versatile`
+   - Endpoint Groq OpenAI-compatible
+   - Si no existe `GROQ_API_KEY`, todo sigue funcionando en fallback determinístico
+   - En fase `interested`, si el lead hace preguntas libres y ya hay taller seleccionado, el bot usa LLM para responder breve y sin inventar datos
+
+2. **Tags automáticos con LLM**
+   - Nuevo archivo: `server/services/analysis/tagger.js`
+   - Después de cada mensaje inbound se intenta clasificar:
+     - `intent`
+     - `sentiment`
+     - `quality`
+   - Los tags se guardan en `tags` para `message`, `conversation` y `lead`
+   - Si no hay `GROQ_API_KEY`, el tagging se omite sin romper el flujo
+
+3. **Lead scoring automático**
+   - Nuevo archivo: `server/services/analysis/scorer.js`
+   - Recalcula `leads.quality_score` basado en:
+     - primer mensaje
+     - cantidad de mensajes inbound
+     - pregunta de precio
+     - intención de inscripción
+     - ghosting >48h
+     - señal de solo curiosidad
+
+4. **Botón de inscripción**
+   - El botón `inscribir_<id>` ya no queda muerto
+   - Ahora crea o actualiza `enrollments` en estado `pending` y confirma el interés por chat
+   - Todavía NO envía QR ni procesa comprobante; eso sigue pendiente para la siguiente fase
+
+5. **Finanzas funcional**
+   - Nueva ruta: `server/routes/finance.js`
+   - Activada en `server/index.js`
+   - Endpoints:
+     - `GET /api/finance/summary`
+     - `GET /api/finance/transactions`
+     - `POST /api/finance/transactions`
+     - `PUT /api/finance/transactions/:id`
+     - `DELETE /api/finance/transactions/:id`
+     - `PUT /api/finance/goals/current`
+   - `client/src/pages/Finance.jsx` ya permite:
+     - ver KPIs del mes
+     - guardar meta mensual
+     - filtrar por mes / tipo / categoría
+     - crear, editar y borrar transacciones
+   - Categorías soportadas:
+     - taller
+     - publicidad
+     - venue
+     - materiales
+     - herramientas
+     - transporte
+     - otros
+
+6. **Insights funcional**
+   - `server/routes/analytics.js` ahora tiene `GET /api/analytics/funnel`
+   - `client/src/pages/Insights.jsx` ahora muestra:
+     - conversión total
+     - tasa de pérdida
+     - leads calificados
+     - leads negociando
+     - embudo visual
+     - top fuentes de leads
+
+7. **Frontend build**
+   - Se reconstruyó `client/dist/`
+   - Build OK con `cd client && npm run build`
+
+### Archivos creados/modificados en sesión 2
+- `server/services/chatbot/llm.js`
+- `server/services/analysis/tagger.js`
+- `server/services/analysis/scorer.js`
+- `server/routes/finance.js`
+- `server/services/chatbot/engine.js`
+- `server/routes/analytics.js`
+- `server/index.js`
+- `client/src/pages/Finance.jsx`
+- `client/src/pages/Insights.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Pendientes importantes
+- Integrar QR de cobro y OCR de comprobantes para la inscripción
+- Pushinator para escalaciones a Daniel
+- Mejorar scoring con señales más finas del historial
+- Evitar acumulación excesiva de tags redundantes si el volumen crece
+- Conectar Finanzas con Agenda 4.0 para consolidado
+- Hacer `Marketing.jsx` funcional
+- Hacer `Settings.jsx` funcional
+- Revisar seguridad de PIN por defecto antes de poner esto realmente expuesto
+
+### Notas operativas
+- El webhook de Telegram ya quedó confirmado en producción:
+  - `GET /api/webhook/telegram/setup` respondió `Webhook is already set`
+  - y el bot respondió mensajes reales
+- Multi-tenant real NO es prioridad hoy
+- La prioridad práctica es: una instalación por cliente + pocos miembros de equipo
+
+### Verificación hecha
+- `node --check` del backend modificado: OK
+- `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 3 (completada)
+
+### Resumen
+Se agregó soporte real para equipo interno dentro de una sola instalación. Ahora Daniel puede crear otros usuarios para operar la app, iniciar sesión con `username + PIN`, y asignar conversaciones manualmente. Esto deja el producto mejor alineado con el uso real: un negocio por instalación, con pocas personas del equipo operando juntas.
+
+### Lo implementado en esta sesión
+1. **Equipo interno**
+   - Nueva ruta: `server/routes/team.js`
+   - Endpoints:
+     - `GET /api/team`
+     - `POST /api/team`
+     - `PUT /api/team/:id`
+     - `DELETE /api/team/:id`
+   - Roles soportados:
+     - `owner`
+     - `admin`
+     - `viewer`
+
+2. **Schema de usuarios mejorado**
+   - `admin_users` ahora soporta:
+     - `display_name`
+     - `active`
+   - Se agregaron migraciones idempotentes en `server/db.js`
+   - El owner seed queda con `display_name = 'Daniel'`
+
+3. **Login actualizado**
+   - `client/src/pages/Login.jsx` ahora pide usuario y PIN
+   - `server/routes/auth.js` ahora autentica por `username + pin`
+   - Nuevo endpoint `GET /api/auth/me`
+   - Se mantiene compatibilidad práctica si no se envía username
+
+4. **Sesión del usuario en frontend**
+   - `client/src/hooks/useAuth.js` ahora guarda y rehidrata `bos_user`
+   - `client/src/utils/api.js` ahora persiste usuario junto al token
+   - Sidebar muestra el usuario logueado y su rol
+
+5. **Asignación manual de conversaciones**
+   - Nuevo endpoint:
+     - `PUT /api/conversations/:id/assign`
+   - `client/src/pages/Conversations.jsx` ahora:
+     - carga el equipo
+     - permite asignar la conversación seleccionada
+     - muestra en la lista a quién está asignado cada chat
+
+6. **Settings funcional**
+   - `client/src/pages/Settings.jsx` dejó de ser placeholder
+   - Ya permite:
+     - ver usuarios internos
+     - crear usuario nuevo
+     - activar/desactivar usuario
+     - eliminar usuario
+
+7. **Fix adicional**
+   - `GET /api/leads/stats/summary` fue movido antes de `/:id` en `server/routes/leads.js`, así ya no queda tapado por la ruta dinámica
+
+### Archivos creados/modificados en sesión 3
+- `server/routes/team.js`
+- `server/db.js`
+- `server/routes/auth.js`
+- `server/middleware/auth.js`
+- `server/routes/conversations.js`
+- `server/routes/leads.js`
+- `server/index.js`
+- `client/src/utils/api.js`
+- `client/src/hooks/useAuth.js`
+- `client/src/App.jsx`
+- `client/src/components/layout/AdminLayout.jsx`
+- `client/src/components/layout/Sidebar.jsx`
+- `client/src/pages/Login.jsx`
+- `client/src/pages/Conversations.jsx`
+- `client/src/pages/Settings.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Cómo usarlo ahora
+- Usuario inicial:
+  - `owner`
+  - PIN actual: `4747`
+- Desde **Configuración**, crear usuario nuevo para otra persona del equipo
+- Luego esa persona entra con su propio `username + PIN`
+- Desde **Conversaciones**, puedes asignar cada chat al usuario que lo va a trabajar
+
+### Pendientes siguientes con más sentido
+- Permitir editar nombre visible, rol y PIN desde Settings sin borrar/recrear usuario
+- Agregar filtro por asignado en Conversaciones
+- Añadir notas internas por conversación
+- Integrar QR/OCR para cerrar la inscripción con cobro real
+
+### Verificación hecha
+- `node --check` del backend modificado: OK
+- `cd client && npm run build`: OK

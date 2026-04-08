@@ -11,6 +11,8 @@ Daniel MacLean — psicólogo en Cochabamba, Bolivia
 - Teléfono personal: 59172034151
 - WhatsApp Business: 59169650802
 - Negocio: talleres de constelaciones familiares, coaching, desarrollo personal
+- Operación esperada hoy: una instalación por cliente/negocio, con hasta 4 usuarios internos como equipo
+- Caso real actual: Daniel y su novia deben poder entrar con cuentas separadas y repartir operación
 
 ## URLs
 - **App**: https://darkred-kangaroo-559638.hostingersite.com/
@@ -26,7 +28,7 @@ Daniel MacLean — psicólogo en Cochabamba, Bolivia
 - **Chat canal futuro:** WhatsApp Cloud API (cuando tenga otro chip)
 - **Integraciones:** Google Vision OCR, Pushinator, Meta Graph API (futuro)
 - **Deploy:** Hostinger Business Web Hosting (segundo sitio Node.js)
-- **Auth:** PIN de 4 dígitos, JWT 90 días
+- **Auth:** usuario + PIN de 4 dígitos, JWT 90 días
 
 ## Proyecto hermano
 - **Agenda 4.0:** `/Users/dran/Documents/Codex openai/agenda4.0/`
@@ -75,12 +77,12 @@ Daniel MacLean — psicólogo en Cochabamba, Bolivia
 
 ## Arquitectura
 
-### Multi-tenant desde el día 1
-- Tabla `tenants` con toda la config por tenant (NO en .env)
-- API keys, WhatsApp config, LLM config, branding — todo en DB
-- `.env` solo tiene: DB credentials, JWT_SECRET, PORT
-- FK `tenant_id` en TODAS las tablas principales
-- Middleware `tenant.js` resuelve y cachea config del tenant
+### Tenant / instalación
+- El schema conserva `tenant_id` en todas las tablas principales
+- En la práctica actual, el producto se está construyendo como **single-tenant por instalación**
+- Eso permite venderlo instalado en el servidor del cliente sin tener que operar un SaaS
+- `tenants` sigue siendo útil para branding, config, API keys y posible evolución futura
+- Si en el futuro se ofrece SaaS, la base ya deja la puerta abierta
 
 ### Sistema de diseño
 - **CSS custom properties** en `client/src/index.css`
@@ -105,6 +107,7 @@ Cron           → followups, reminders, analysis batch
 - Playbooks configurables por taller (JSON en DB)
 - Fases: qualify → educate (LLM) → close → confirm (OCR)
 - Escalación a Daniel vía Pushinator
+- Groq actual: `llama-3.3-70b-versatile` con fallback determinístico si falta `GROQ_API_KEY`
 
 ### 2. Conversaciones + Tags
 - Almacena todo mensaje WhatsApp en `messages`
@@ -134,6 +137,28 @@ Cron           → followups, reminders, analysis batch
 - Análisis de objeciones (datos del LLM)
 - Comparativa por taller
 - Consolidado con Agenda 4.0
+
+## Estado funcional añadido en sesión 2
+- `server/services/chatbot/llm.js` — integración Groq OpenAI-compatible con fallback si no hay key
+- `server/services/analysis/tagger.js` — tags automáticos por mensaje inbound (`intent`, `sentiment`, `quality`)
+- `server/services/analysis/scorer.js` — scoring automático de leads
+- `server/routes/finance.js` — CRUD de transacciones + resumen mensual + meta mensual
+- `GET /api/analytics/funnel` — embudo y top fuentes
+- `client/src/pages/Finance.jsx` — página funcional para registrar y filtrar ingresos/gastos
+- `client/src/pages/Insights.jsx` — embudo visual y top fuentes
+- Chatbot: en fase `interested`, preguntas libres usan Groq si está disponible
+- Chatbot: botón `inscribir_<id>` ahora crea/actualiza enrollment pendiente y responde confirmando interés
+
+## Estado funcional añadido en sesión 3
+- Login actualizado a `username + PIN`
+- `GET /api/auth/me` para rehidratar usuario autenticado
+- Nuevo módulo `server/routes/team.js`
+- `client/src/pages/Settings.jsx` ya no es placeholder: ahora gestiona equipo interno
+- `admin_users` soporta `display_name` y `active`
+- Las conversaciones pueden asignarse manualmente a usuarios internos
+- Sidebar muestra usuario y rol activos
+- La lista de conversaciones muestra a quién está asignado cada chat
+- `GET /api/leads/stats/summary` quedó corregido en el orden de rutas
 
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar

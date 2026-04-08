@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { apiGet } from '../utils/api'
+import { apiGet, apiPut } from '../utils/api'
 import { timeAgo } from '../utils/dates'
 
 const STATUS_LABELS = {
@@ -21,6 +21,7 @@ export default function Conversations() {
   const [selected, setSelected] = useState(null)
   const [messages, setMessages] = useState([])
   const [loadingMsgs, setLoadingMsgs] = useState(false)
+  const [team, setTeam] = useState([])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -33,6 +34,11 @@ export default function Conversations() {
   }, [filter])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => {
+    apiGet('/api/team')
+      .then(setTeam)
+      .catch(() => setTeam([]))
+  }, [])
 
   async function selectConversation(conv) {
     setSelected(conv)
@@ -84,6 +90,9 @@ export default function Conversations() {
               {c.workshop_name && (
                 <div className="text-xs text-secondary">{c.workshop_name}</div>
               )}
+              <div className="text-xs text-muted" style={{ marginTop: 2 }}>
+                Asignado a: {c.assigned_to || 'bot'}
+              </div>
               <div className="text-sm text-muted truncate" style={{ marginTop: 2 }}>
                 {c.last_message || 'Sin mensajes'}
               </div>
@@ -108,6 +117,36 @@ export default function Conversations() {
             <div className="text-muted" style={{ padding: 'var(--space-8)', textAlign: 'center' }}>Cargando mensajes...</div>
           ) : (
             <div className="chat-messages">
+              <div className="card" style={{ marginBottom: 'var(--space-3)' }}>
+                <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
+                  <div>
+                    <div className="font-semibold">Asignación</div>
+                    <div className="text-xs text-muted">Define quién maneja esta conversación</div>
+                  </div>
+                  <select
+                    className="input"
+                    style={{ maxWidth: 240 }}
+                    value={selected.assigned_to || 'bot'}
+                    onChange={async (e) => {
+                      const assignedTo = e.target.value
+                      try {
+                        await apiPut(`/api/conversations/${selected.id}/assign`, { assigned_to: assignedTo === 'bot' ? null : assignedTo })
+                        setSelected((current) => current ? { ...current, assigned_to: assignedTo } : current)
+                        setConversations((current) => current.map((item) => item.id === selected.id ? { ...item, assigned_to: assignedTo } : item))
+                      } catch (err) {
+                        alert(err.message)
+                      }
+                    }}
+                  >
+                    <option value="bot">Bot / sin asignar</option>
+                    {team.map((member) => (
+                      <option key={member.id} value={member.username}>
+                        {member.display_name || member.username}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               {messages.map(m => (
                 <div key={m.id} className={`chat-bubble ${m.direction === 'outbound' ? 'outbound' : 'inbound'}`}>
                   <div className="chat-bubble-content">{m.content}</div>

@@ -1,4 +1,7 @@
-const { query, withTransaction } = require('../../db');
+const { query } = require('../../db');
+const { generateInterestedReply } = require('./llm');
+const { analyzeAndTagInboundMessage } = require('../analysis/tagger');
+const { recalculateLeadScore } = require('../analysis/scorer');
 
 /**
  * Motor de chatbot — agnóstico al canal.
@@ -25,7 +28,7 @@ class ChatbotEngine {
       const conversation = await this.findOrCreateConversation(lead.id);
 
       // 3. Guardar mensaje entrante
-      await this.saveMessage(conversation.id, 'inbound', senderId, text, messageId, contentType);
+      const inboundMessageId = await this.saveMessage(conversation.id, 'inbound', senderId, text, messageId, contentType);
 
       // 4. Actualizar timestamps
       await query(
@@ -36,6 +39,28 @@ class ChatbotEngine {
         'UPDATE conversations SET last_message_at = NOW(), human_messages_count = human_messages_count + 1 WHERE id = ?',
         [conversation.id]
       );
+
+      const workshop = conversation.workshop_id
+        ? await this.getWorkshopById(conversation.workshop_id)
+        : null;
+
+      await analyzeAndTagInboundMessage({
+        tenantId: this.tenantId,
+        lead,
+        conversation,
+        workshop,
+        messageId: inboundMessageId,
+        messageText: text,
+      }).catch((err) => {
+        console.error('[ChatbotEngine] Tagging skipped by error:', err.message);
+      });
+
+      await recalculateLeadScore({
+        tenantId: this.tenantId,
+        leadId: lead.id,
+      }).catch((err) => {
+        console.error('[ChatbotEngine] Scoring skipped by error:', err.message);
+      });
 
       // 5. Procesar según fase del playbook
       const response = await this.processPhase(conversation, lead, text, contentType);
@@ -107,11 +132,12 @@ class ChatbotEngine {
   }
 
   async saveMessage(conversationId, direction, sender, content, messageId, contentType = 'text') {
-    await query(
+    const result = await query(
       `INSERT INTO messages (conversation_id, direction, sender, content, wa_message_id, content_type, created_at)
        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
       [conversationId, direction, sender, content, messageId, contentType]
     );
+    return result.insertId;
   }
 
   /**
@@ -259,9 +285,38 @@ class ChatbotEngine {
       return this.handleWorkshopSelection(conversation, lead, parseInt(workshopMatch[1]));
     }
 
+    const enrollMatch = text.match(/^inscribir_(\d+)$/);
+    if (enrollMatch) {
+      return this.handleEnrollmentIntent(conversation, lead, parseInt(enrollMatch[1]));
+    }
+
     if (/hablar|daniel/i.test(text)) {
       await query('UPDATE conversations SET status = "escalated", escalated_at = NOW() WHERE id = ?', [conversation.id]);
       return { type: 'text', text: 'Daniel te escribirá pronto.' };
+    }
+
+    const selectedWorkshop = conversation.workshop_id
+      ? await this.getWorkshopById(conversation.workshop_id)
+      : null;
+
+    const recentMessages = await this.getRecentMessages(conversation.id);
+    const llmReply = selectedWorkshop
+      ? await generateInterestedReply({
+          lead,
+          workshop: selectedWorkshop,
+          messageText: text,
+          recentMessages,
+        }).catch((err) => {
+          console.error('[ChatbotEngine] LLM fallback:', err.message);
+          return null;
+        })
+      : null;
+
+    if (llmReply) {
+      return {
+        type: 'text',
+        text: llmReply,
+      };
     }
 
     return {
@@ -272,18 +327,13 @@ class ChatbotEngine {
   }
 
   async handleWorkshopSelection(conversation, lead, workshopId) {
-    const workshops = await query(
-      `SELECT w.*, v.name as venue_name, v.address as venue_address
-       FROM workshops w LEFT JOIN venues v ON v.id = w.venue_id
-       WHERE w.id = ? AND w.tenant_id = ?`,
-      [workshopId, this.tenantId]
-    );
+    const workshops = await this.getWorkshopById(workshopId);
 
-    if (workshops.length === 0) {
+    if (!workshops) {
       return { type: 'text', text: 'Ese taller ya no está disponible. ¿Puedo ayudarte con algo más?' };
     }
 
-    const w = workshops[0];
+    const w = workshops;
     const spotsLeft = w.max_participants - w.current_participants;
 
     // Vincular conversación al taller
@@ -323,6 +373,29 @@ class ChatbotEngine {
     };
   }
 
+  async handleEnrollmentIntent(conversation, lead, workshopId) {
+    const workshop = await this.getWorkshopById(workshopId);
+
+    if (!workshop) {
+      return { type: 'text', text: 'Ese taller ya no está disponible. Si quieres, Daniel te puede orientar con otra opción.' };
+    }
+
+    await query('UPDATE leads SET status = "negotiating" WHERE id = ?', [lead.id]);
+    await query(
+      `INSERT INTO enrollments (tenant_id, workshop_id, lead_id, status, amount_due, payment_status, notes)
+       VALUES (?, ?, ?, 'pending', ?, 'unpaid', ?)
+       ON DUPLICATE KEY UPDATE status = VALUES(status), amount_due = VALUES(amount_due), payment_status = VALUES(payment_status), notes = VALUES(notes)`,
+      [this.tenantId, workshop.id, lead.id, workshop.early_bird_price || workshop.price || 0, 'Interés de inscripción desde chatbot']
+    ).catch((err) => {
+      console.error('[ChatbotEngine] No se pudo crear enrollment:', err.message);
+    });
+
+    return {
+      type: 'text',
+      text: `Perfecto. Ya registré tu interés para ${workshop.name}. Daniel te compartirá el cobro y los siguientes pasos para confirmar tu inscripción.`,
+    };
+  }
+
   // --- Helpers ---
 
   async getActiveWorkshops() {
@@ -333,6 +406,28 @@ class ChatbotEngine {
        ORDER BY w.date ASC`,
       [this.tenantId]
     );
+  }
+
+  async getWorkshopById(workshopId) {
+    const workshops = await query(
+      `SELECT w.*, v.name as venue_name, v.address as venue_address
+       FROM workshops w LEFT JOIN venues v ON v.id = w.venue_id
+       WHERE w.id = ? AND w.tenant_id = ?`,
+      [workshopId, this.tenantId]
+    );
+    return workshops[0] || null;
+  }
+
+  async getRecentMessages(conversationId) {
+    const rows = await query(
+      `SELECT direction, content
+       FROM messages
+       WHERE conversation_id = ?
+       ORDER BY id DESC
+       LIMIT 6`,
+      [conversationId]
+    );
+    return rows.reverse();
   }
 
   async getActiveWorkshopButtons() {
@@ -382,7 +477,8 @@ class ChatbotEngine {
     }
 
     // Guardar mensaje saliente
-    await this.saveMessage(conversationId, 'outbound', 'bot', response.text, sentMessageId || '', 'text');
+    const savedContent = response.text || response.caption || '';
+    await this.saveMessage(conversationId, 'outbound', 'bot', savedContent, sentMessageId || '', response.type || 'text');
     await query(
       'UPDATE conversations SET bot_messages_count = bot_messages_count + 1 WHERE id = ?',
       [conversationId]

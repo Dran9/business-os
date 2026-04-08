@@ -8,18 +8,35 @@ const router = express.Router();
 // POST /api/auth/login — solo PIN de 4 dígitos
 router.post('/login', async (req, res) => {
   try {
-    const { pin } = req.body;
+    const { pin, username } = req.body;
 
     if (!pin || pin.length !== 4) {
       return res.status(400).json({ error: 'PIN de 4 dígitos requerido' });
     }
 
-    const users = await query(
-      'SELECT au.*, t.name as tenant_name FROM admin_users au JOIN tenants t ON t.id = au.tenant_id LIMIT 1'
-    );
+    let users;
+    if (username) {
+      users = await query(
+        `SELECT au.*, t.name as tenant_name
+         FROM admin_users au
+         JOIN tenants t ON t.id = au.tenant_id
+         WHERE au.username = ? AND au.active = TRUE
+         LIMIT 1`,
+        [username.trim()]
+      );
+    } else {
+      users = await query(
+        `SELECT au.*, t.name as tenant_name
+         FROM admin_users au
+         JOIN tenants t ON t.id = au.tenant_id
+         WHERE au.active = TRUE
+         ORDER BY au.id ASC
+         LIMIT 1`
+      );
+    }
 
     if (users.length === 0) {
-      return res.status(401).json({ error: 'No hay admin configurado' });
+      return res.status(401).json({ error: 'Usuario no encontrado o inactivo' });
     }
 
     const user = users[0];
@@ -34,15 +51,50 @@ router.post('/login', async (req, res) => {
         userId: user.id,
         tenantId: user.tenant_id,
         role: user.role,
+        username: user.username,
+        displayName: user.display_name || user.username,
       },
       process.env.JWT_SECRET,
       { expiresIn: '90d' }
     );
 
-    res.json({ token });
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name || user.username,
+        role: user.role,
+        tenant_id: user.tenant_id,
+      },
+    });
   } catch (err) {
     console.error('[auth/login]', err);
     res.status(500).json({ error: 'Error interno' });
+  }
+});
+
+router.get('/me', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Token requerido' });
+    }
+    const token = authHeader.slice(7);
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const users = await query(
+      `SELECT id, tenant_id, username, display_name, role, active
+       FROM admin_users
+       WHERE id = ? AND tenant_id = ? AND active = TRUE
+       LIMIT 1`,
+      [payload.userId, payload.tenantId]
+    );
+    if (users.length === 0) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
+    res.json({ user: users[0] });
+  } catch (err) {
+    res.status(401).json({ error: 'Token inválido o expirado' });
   }
 });
 

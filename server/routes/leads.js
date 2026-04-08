@@ -35,6 +35,30 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/leads/stats/summary — estadísticas rápidas
+router.get('/stats/summary', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const [total] = await query('SELECT COUNT(*) as c FROM leads WHERE tenant_id = ?', [req.tenantId]);
+    const statuses = await query(
+      'SELECT status, COUNT(*) as c FROM leads WHERE tenant_id = ? GROUP BY status',
+      [req.tenantId]
+    );
+    const sources = await query(
+      'SELECT source, COUNT(*) as c FROM leads WHERE tenant_id = ? AND source IS NOT NULL GROUP BY source',
+      [req.tenantId]
+    );
+
+    res.json({
+      total: total.c,
+      by_status: Object.fromEntries(statuses.map(r => [r.status, r.c])),
+      by_source: Object.fromEntries(sources.map(r => [r.source, r.c])),
+    });
+  } catch (err) {
+    console.error('[leads stats]', err);
+    res.status(500).json({ error: 'Error' });
+  }
+});
+
 // GET /api/leads/:id — detalle de un lead con conversaciones
 router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
@@ -97,30 +121,6 @@ router.delete('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
     res.json({ message: 'Lead eliminado' });
   } catch (err) {
     console.error('[leads DELETE]', err);
-    res.status(500).json({ error: 'Error' });
-  }
-});
-
-// GET /api/leads/stats/summary — estadísticas rápidas
-router.get('/stats/summary', authMiddleware, tenantMiddleware, async (req, res) => {
-  try {
-    const [total] = await query('SELECT COUNT(*) as c FROM leads WHERE tenant_id = ?', [req.tenantId]);
-    const statuses = await query(
-      'SELECT status, COUNT(*) as c FROM leads WHERE tenant_id = ? GROUP BY status',
-      [req.tenantId]
-    );
-    const sources = await query(
-      'SELECT source, COUNT(*) as c FROM leads WHERE tenant_id = ? AND source IS NOT NULL GROUP BY source',
-      [req.tenantId]
-    );
-
-    res.json({
-      total: total.c,
-      by_status: Object.fromEntries(statuses.map(r => [r.status, r.c])),
-      by_source: Object.fromEntries(sources.map(r => [r.source, r.c])),
-    });
-  } catch (err) {
-    console.error('[leads stats]', err);
     res.status(500).json({ error: 'Error' });
   }
 });

@@ -460,6 +460,19 @@ async function initializeDatabase() {
       console.log('[DB] Tenant por defecto creado: daniel-maclean');
     }
 
+    // --- Seed admin user (PIN 4747) ---
+    const [admins] = await conn.execute('SELECT id FROM admin_users LIMIT 1');
+    if (admins.length === 0) {
+      const [t] = await conn.execute('SELECT id FROM tenants LIMIT 1');
+      if (t.length > 0) {
+        await conn.execute(
+          'INSERT INTO admin_users (tenant_id, username, password_hash, role) VALUES (?, ?, ?, ?)',
+          [t[0].id, 'owner', '$2a$12$YC/nDqc79w9PcdVTBr8c0.Tp5WzyQiqSLLnZ7btwb4RLmoEBRmCb.', 'owner']
+        );
+        console.log('[DB] Admin creado con PIN por defecto');
+      }
+    }
+
     console.log('[DB] Schema inicializado correctamente');
   } finally {
     conn.release();

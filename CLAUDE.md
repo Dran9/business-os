@@ -22,8 +22,8 @@ Daniel MacLean — psicólogo en Cochabamba, Bolivia
 - **Server:** Express + MySQL (Hostinger) — `server/`
 - **Client:** React 18 + Vite 8 + CSS custom properties — `client/`
 - **LLM:** Groq (gratis) para tagging + DeepSeek para conversaciones
-- **Chat canal dev:** Telegram Bot API (testing/desarrollo)
-- **Chat canal prod:** WhatsApp Cloud API (futuro, cuando tenga otro chip)
+- **Chat canal:** Telegram Bot API (FUNCIONANDO — @dranTele_bot)
+- **Chat canal futuro:** WhatsApp Cloud API (cuando tenga otro chip)
 - **Integraciones:** Google Vision OCR, Pushinator, Meta Graph API (futuro)
 - **Deploy:** Hostinger Business Web Hosting (segundo sitio Node.js)
 - **Auth:** PIN de 4 dígitos, JWT 90 días

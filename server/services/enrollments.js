@@ -1,6 +1,7 @@
 const { query } = require('../db');
 const TelegramAdapter = require('./channels/telegram');
 const { getActivePaymentOptions, getPaymentOptionBySlot, getPaymentQrAsset } = require('./paymentOptions');
+const { broadcast } = require('./adminEvents');
 
 function parseJson(value) {
   if (!value) return {};
@@ -214,6 +215,11 @@ async function confirmEnrollmentPayment(tenantId, enrollmentId, amountOverride =
   }
 
   await syncWorkshopParticipantCount(tenantId, enrollment.workshop_id);
+  broadcast('finance:change', { workshopId: enrollment.workshop_id, leadId: enrollment.lead_id, reason: 'manual-payment-confirmed' }, tenantId);
+  broadcast('lead:change', { id: enrollment.lead_id, reason: 'converted' }, tenantId);
+  if (enrollment.conversation_id) {
+    broadcast('conversation:change', { id: enrollment.conversation_id, reason: 'converted' }, tenantId);
+  }
   return getEnrollmentWithRelations(tenantId, enrollmentId);
 }
 
@@ -243,6 +249,9 @@ async function rejectEnrollmentPayment(tenantId, enrollmentId, reason = '') {
   );
 
   await syncWorkshopParticipantCount(tenantId, enrollment.workshop_id);
+  if (enrollment.conversation_id) {
+    broadcast('conversation:change', { id: enrollment.conversation_id, reason: 'payment-rejected' }, tenantId);
+  }
   return getEnrollmentWithRelations(tenantId, enrollmentId);
 }
 

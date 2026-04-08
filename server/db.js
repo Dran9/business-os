@@ -246,9 +246,11 @@ async function initializeDatabase() {
         current_phase VARCHAR(50),
         status ENUM('active','converted','lost','escalated','dormant') DEFAULT 'active',
         assigned_to VARCHAR(100) DEFAULT 'bot',
+        inbox_state VARCHAR(20) DEFAULT 'open',
         bot_messages_count INT DEFAULT 0,
         human_messages_count INT DEFAULT 0,
         escalation_reason TEXT,
+        internal_notes TEXT,
         started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_message_at DATETIME,
         converted_at DATETIME,
@@ -503,6 +505,9 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_3_mime VARCHAR(100)').catch(() => {});
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_4 MEDIUMBLOB').catch(() => {});
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_4_mime VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS inbox_state VARCHAR(20) DEFAULT "open"').catch(() => {});
+    await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS internal_notes TEXT').catch(() => {});
+    await conn.execute('UPDATE conversations SET inbox_state = "open" WHERE inbox_state IS NULL OR inbox_state = ""').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_requested_at DATETIME').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS verified_at DATETIME').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof MEDIUMBLOB').catch(() => {});

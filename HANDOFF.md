@@ -633,3 +633,115 @@ Se cerró la primera capa operativa de inscripciones dentro del admin. Ahora Dan
 - `node --check server/services/enrollments.js`: OK
 - `node --check server/services/chatbot/paymentWorkflow.js`: OK
 - `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 6 (completada)
+
+### Resumen
+Se volvió operativo el inbox y se introdujo una capa real de actualización en vivo para que la app deje de depender de refresh manual en los módulos clave. Ahora Conversaciones permite operar chats desde admin con notas, estado interno y envío manual, mientras Leads y Finanzas reaccionan automáticamente a cambios del sistema y del bot.
+
+### Lo implementado en esta sesión
+1. **SSE admin**
+   - Nuevo archivo: `server/services/adminEvents.js`
+   - Nuevo endpoint: `GET /api/admin/events`
+   - Usa token JWT por query string (`?token=`) para EventSource
+   - Mantiene heartbeats para evitar timeouts en Hostinger/LiteSpeed
+
+2. **Conversations con estado operativo**
+   - `conversations` ahora soporta:
+     - `inbox_state`
+     - `internal_notes`
+   - Migraciones idempotentes añadidas en `server/db.js`
+   - Se normalizan conversaciones viejas con `inbox_state = 'open'`
+
+3. **Inbox admin operativo**
+   - `server/routes/conversations.js` fue ampliado con:
+     - filtros por `status`
+     - filtros por `assigned_to`
+     - filtros por `inbox_state`
+     - búsqueda por lead o taller
+     - `PUT /api/conversations/:id/inbox-state`
+     - `PUT /api/conversations/:id/notes`
+     - `POST /api/conversations/:id/messages`
+   - El envío manual usa Telegram cuando el canal es `telegram`
+   - Los mensajes manuales quedan guardados en `messages`
+
+4. **UI de Conversaciones rehecha**
+   - `client/src/pages/Conversations.jsx` ahora incluye:
+     - filtros operativos
+     - indicador `En vivo`
+     - selección y refresco automático del hilo
+     - estado operativo (`Abierta`, `Pendiente`, `Resuelta`)
+     - notas internas
+     - composer para responder manualmente
+
+5. **Actualización en vivo en Leads y Finanzas**
+   - Nuevo hook: `client/src/hooks/useAdminEvents.js`
+   - `client/src/pages/Leads.jsx` ahora escucha eventos `lead:change` y `conversation:change`
+   - `client/src/pages/Finance.jsx` ahora escucha `finance:change`
+   - Ambas pantallas muestran indicador de conexión `En vivo`
+   - Se añadió `useDeferredValue` en búsquedas de leads para no disparar recargas agresivas mientras se escribe
+
+6. **Broadcasts del backend**
+   - `server/services/chatbot/engine.js` ahora emite eventos al:
+     - crear leads
+     - crear conversaciones
+     - guardar mensajes inbound/outbound
+     - procesar interacción
+   - Además:
+     - inbound reabre `inbox_state` a `open`
+     - outbound actualiza `last_message_at`
+   - `server/routes/leads.js` emite `lead:change` en update/delete
+   - `server/routes/finance.js` emite `finance:change` en create/update/delete/meta
+   - `server/services/enrollments.js` y `server/services/chatbot/paymentWorkflow.js` emiten eventos al confirmar pagos, para que Finanzas y el inbox se refresquen solos
+
+7. **Estilos y UX**
+   - `client/src/index.css` ahora tiene estilos para:
+     - indicador live
+     - panel lateral de operación
+     - composer del inbox
+     - textarea reusable
+
+### Archivos creados/modificados en sesión 6
+- `server/services/adminEvents.js`
+- `server/index.js`
+- `server/db.js`
+- `server/routes/conversations.js`
+- `server/routes/leads.js`
+- `server/routes/finance.js`
+- `server/services/chatbot/engine.js`
+- `server/services/chatbot/paymentWorkflow.js`
+- `server/services/enrollments.js`
+- `client/src/hooks/useAdminEvents.js`
+- `client/src/utils/api.js`
+- `client/src/pages/Conversations.jsx`
+- `client/src/pages/Leads.jsx`
+- `client/src/pages/Finance.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Notas importantes
+- La capa live usa SSE, no polling. Eso deja la app más instantánea sin meter carga innecesaria en Hostinger.
+- El envío manual desde admin hoy soporta Telegram. Si luego se suma WhatsApp Cloud API, el siguiente paso correcto es crear un factory por canal y no meter `if channel === ...` en las rutas.
+- El inbox operativo (`inbox_state`) es separado del estado comercial (`status`) de la conversación. Esto es intencional y correcto.
+
+### Pendientes siguientes con más sentido
+- Agregar filtro por `inbox_state` también en sidebar/dashboard si luego hace falta
+- Mostrar y descargar comprobantes desde enrollments/inbox
+- Añadir acciones rápidas desde leads para abrir conversación o crear follow-up
+- Integrar una vista más fuerte de “pendientes del equipo” usando `assigned_to + inbox_state`
+- Si el volumen sube mucho, considerar cache corto o deduplicación adicional para lista de conversaciones
+
+### Verificación hecha
+- `node --check server/index.js`: OK
+- `node --check server/db.js`: OK
+- `node --check server/routes/conversations.js`: OK
+- `node --check server/routes/leads.js`: OK
+- `node --check server/routes/finance.js`: OK
+- `node --check server/services/chatbot/engine.js`: OK
+- `node --check server/services/chatbot/paymentWorkflow.js`: OK
+- `node --check server/services/enrollments.js`: OK
+- `cd client && npm run build`: OK

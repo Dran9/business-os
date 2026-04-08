@@ -216,6 +216,35 @@ Cron           → followups, reminders, analysis batch
   - mantiene el enrollment en revisión operativa
 - El workflow OCR automático ahora también sincroniza `current_participants` cuando valida un pago
 
+## Estado funcional añadido en sesión 6
+- Nuevo servicio `server/services/adminEvents.js` para Server-Sent Events admin
+- `server/index.js` ahora expone `GET /api/admin/events`
+- La app ya soporta actualización en vivo en:
+  - Leads
+  - Conversaciones / Inbox
+  - Finanzas
+- `conversations` ahora soporta:
+  - `inbox_state` (`open`, `pending`, `resolved`)
+  - `internal_notes`
+- El inbox admin ya permite:
+  - filtrar por estado comercial
+  - filtrar por estado operativo del inbox
+  - filtrar por asignado
+  - buscar por lead o taller
+  - guardar notas internas
+  - cambiar estado operativo
+  - enviar mensajes manuales desde el panel
+- Al entrar un mensaje inbound:
+  - la conversación vuelve a `open`
+  - se emiten eventos admin en vivo
+- Al enviar mensaje manual desde admin:
+  - se manda por Telegram
+  - se guarda en `messages`
+  - la conversación pasa a `pending`
+  - se autoasigna al operador si estaba en `bot`
+- `server/services/chatbot/engine.js` ahora actualiza `last_message_at` también en outbound
+- Leads y Finanzas escuchan eventos en vivo y recargan sin refresh manual
+
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar
 - Acciones sobre talleres: broadcast, recordatorio, clonar

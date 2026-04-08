@@ -2,6 +2,7 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const { tenantMiddleware } = require('../middleware/tenant');
 const { query, queryPaginated } = require('../db');
+const { broadcast } = require('../services/adminEvents');
 
 const router = express.Router();
 
@@ -107,6 +108,7 @@ router.put('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
 
     params.push(req.params.id, req.tenantId);
     await query(`UPDATE leads SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, params);
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'updated' }, req.tenantId);
     res.json({ message: 'Lead actualizado' });
   } catch (err) {
     console.error('[leads PUT]', err);
@@ -118,6 +120,7 @@ router.put('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
     await query('DELETE FROM leads WHERE id = ? AND tenant_id = ?', [req.params.id, req.tenantId]);
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'deleted' }, req.tenantId);
     res.json({ message: 'Lead eliminado' });
   } catch (err) {
     console.error('[leads DELETE]', err);

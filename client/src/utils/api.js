@@ -1,6 +1,6 @@
 const API_BASE = '';
 
-function getToken() {
+export function getToken() {
   return localStorage.getItem('bos_token');
 }
 

@@ -1,4 +1,5 @@
 const { query } = require('../../db');
+const { broadcast } = require('../adminEvents');
 const { generateInterestedReply } = require('./llm');
 const { analyzeAndTagInboundMessage } = require('../analysis/tagger');
 const { recalculateLeadScore } = require('../analysis/scorer');
@@ -40,6 +41,13 @@ class ChatbotEngine {
         'UPDATE conversations SET last_message_at = NOW(), human_messages_count = human_messages_count + 1 WHERE id = ?',
         [conversation.id]
       );
+      await query(
+        'UPDATE conversations SET inbox_state = "open" WHERE id = ?',
+        [conversation.id]
+      );
+
+      broadcast('lead:change', { id: lead.id, reason: 'inbound-message' }, this.tenantId);
+      broadcast('conversation:change', { id: conversation.id, reason: 'inbound-message' }, this.tenantId);
 
       const workshop = conversation.workshop_id
         ? await this.getWorkshopById(conversation.workshop_id)
@@ -86,6 +94,9 @@ class ChatbotEngine {
         await this.sendResponse(senderId, conversation.id, response);
       }
 
+      broadcast('lead:change', { id: lead.id, reason: 'interaction' }, this.tenantId);
+      broadcast('conversation:change', { id: conversation.id, reason: 'interaction' }, this.tenantId);
+
     } catch (err) {
       console.error('[ChatbotEngine] Error processing message:', err);
       // No crashear — logear y seguir
@@ -108,6 +119,8 @@ class ChatbotEngine {
        VALUES (?, ?, ?, ?, 'new', NOW(), NOW())`,
       [this.tenantId, channelId, name, this.channel.channelName]
     );
+
+    broadcast('lead:change', { id: result.insertId, reason: 'created' }, this.tenantId);
 
     return {
       id: result.insertId,
@@ -138,6 +151,8 @@ class ChatbotEngine {
       [this.tenantId, leadId, this.channel.channelName]
     );
 
+    broadcast('conversation:change', { id: result.insertId, reason: 'created', leadId }, this.tenantId);
+
     return {
       id: result.insertId,
       lead_id: leadId,
@@ -153,6 +168,7 @@ class ChatbotEngine {
        VALUES (?, ?, ?, ?, ?, ?, NOW())`,
       [conversationId, direction, sender, content, messageId, contentType]
     );
+    broadcast('message:change', { conversationId, messageId: result.insertId, direction }, this.tenantId);
     return result.insertId;
   }
 
@@ -524,9 +540,10 @@ class ChatbotEngine {
     const savedContent = response.text || response.caption || '';
     await this.saveMessage(conversationId, 'outbound', 'bot', savedContent, sentMessageId || '', response.type || 'text');
     await query(
-      'UPDATE conversations SET bot_messages_count = bot_messages_count + 1 WHERE id = ?',
+      'UPDATE conversations SET bot_messages_count = bot_messages_count + 1, last_message_at = NOW() WHERE id = ?',
       [conversationId]
     );
+    broadcast('conversation:change', { id: conversationId, reason: 'outbound-message' }, this.tenantId);
   }
 }
 

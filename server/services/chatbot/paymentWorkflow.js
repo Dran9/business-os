@@ -7,6 +7,7 @@ const {
   getPaymentSettings,
 } = require('../paymentOptions');
 const { syncWorkshopParticipantCount } = require('../enrollments');
+const { broadcast } = require('../adminEvents');
 
 function parseJson(value) {
   if (!value) return {};
@@ -366,7 +367,11 @@ async function maybeProcessPaymentProof({ tenantId, conversation, lead, incoming
 
   if (enrollment) {
     await syncWorkshopParticipantCount(tenantId, enrollment.workshop_id);
+    broadcast('finance:change', { workshopId: enrollment.workshop_id, leadId: lead.id, reason: 'ocr-payment-confirmed' }, tenantId);
   }
+
+  broadcast('lead:change', { id: lead.id, reason: 'converted' }, tenantId);
+  broadcast('conversation:change', { id: conversation.id, reason: 'ocr-payment-confirmed' }, tenantId);
 
   return {
     type: 'text',

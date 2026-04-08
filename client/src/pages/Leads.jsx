@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
+import { useAdminEvents } from '../hooks/useAdminEvents'
 import { timeAgo } from '../utils/dates'
 
 const STATUS_LABELS = {
@@ -18,23 +19,37 @@ export default function Leads() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
 
   const load = useCallback(() => {
     setLoading(true)
     let url = '/api/leads?limit=100'
     if (filter) url += `&status=${filter}`
-    if (search) url += `&search=${encodeURIComponent(search)}`
+    if (deferredSearch) url += `&search=${encodeURIComponent(deferredSearch)}`
     apiGet(url)
-      .then(r => setLeads(r.data || []))
+      .then(r => {
+        startTransition(() => {
+          setLeads(r.data || [])
+        })
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [filter, search])
+  }, [deferredSearch, filter])
 
   useEffect(() => { load() }, [load])
+  const { connected } = useAdminEvents({
+    'lead:change': load,
+    'conversation:change': load,
+  })
 
   return (
     <div>
-      <h1 className="page-title">Leads</h1>
+      <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
+        <h1 className="page-title">Leads</h1>
+        <span className={`live-indicator ${connected ? 'connected' : ''}`}>
+          {connected ? 'En vivo' : 'Reconectando'}
+        </span>
+      </div>
 
       <div className="flex gap-2 mt-4" style={{ flexWrap: 'wrap' }}>
         <input

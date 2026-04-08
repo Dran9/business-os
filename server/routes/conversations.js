@@ -1,17 +1,91 @@
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const { tenantMiddleware } = require('../middleware/tenant');
-const { query, pool } = require('../db');
+const { query, queryPaginated } = require('../db');
+const TelegramAdapter = require('../services/channels/telegram');
+const { broadcast } = require('../services/adminEvents');
 
 const router = express.Router();
+const VALID_INBOX_STATES = new Set(['open', 'pending', 'resolved']);
 
-// GET /api/conversations — listar conversaciones
+function parseJson(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtml(text) {
+  return String(text || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function getTelegramAdapter() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    throw new Error('TELEGRAM_BOT_TOKEN no configurado');
+  }
+  return new TelegramAdapter(token);
+}
+
+async function getConversationById(tenantId, id) {
+  const rows = await query(
+    `SELECT c.*, l.name AS lead_name, l.phone AS lead_phone, l.status AS lead_status,
+            l.quality_score, w.name AS workshop_name
+     FROM conversations c
+     JOIN leads l ON l.id = c.lead_id
+     LEFT JOIN workshops w ON w.id = c.workshop_id
+     WHERE c.id = ? AND c.tenant_id = ?
+     LIMIT 1`,
+    [id, tenantId]
+  );
+  return rows[0] || null;
+}
+
+async function attachTags(tenantId, items) {
+  if (!items.length) return items;
+  const ids = items.map((item) => item.id);
+  const placeholders = ids.map(() => '?').join(', ');
+  const tagRows = await query(
+    `SELECT target_id, category, value, color, source
+     FROM tags
+     WHERE tenant_id = ? AND target_type = 'conversation' AND target_id IN (${placeholders})
+     ORDER BY id DESC`,
+    [tenantId, ...ids]
+  );
+
+  const tagsByConversation = new Map();
+  for (const row of tagRows) {
+    if (!tagsByConversation.has(row.target_id)) {
+      tagsByConversation.set(row.target_id, []);
+    }
+    tagsByConversation.get(row.target_id).push(row);
+  }
+
+  return items.map((item) => ({
+    ...item,
+    metadata: parseJson(item.metadata),
+    tags: tagsByConversation.get(item.id) || [],
+  }));
+}
+
 router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    const { status, page = 1, limit = 30 } = req.query;
-    let sql = `SELECT c.*, l.name as lead_name, l.phone as lead_phone, l.status as lead_status,
-                      l.quality_score, w.name as workshop_name,
-                      (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message
+    const { status, assigned_to, inbox_state, search, page = 1, limit = 30 } = req.query;
+    let sql = `SELECT c.*, l.name AS lead_name, l.phone AS lead_phone, l.status AS lead_status,
+                      l.quality_score, w.name AS workshop_name,
+                      (
+                        SELECT content
+                        FROM messages
+                        WHERE conversation_id = c.id
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                      ) AS last_message
                FROM conversations c
                JOIN leads l ON l.id = c.lead_id
                LEFT JOIN workshops w ON w.id = c.workshop_id
@@ -23,51 +97,58 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
       params.push(status);
     }
 
-    sql += ' ORDER BY c.last_message_at DESC';
-
-    const offset = (Number(page) - 1) * Number(limit);
-    const [[{ total }]] = await pool.execute(
-      `SELECT COUNT(*) as total FROM conversations WHERE tenant_id = ?${status ? ' AND status = ?' : ''}`,
-      status ? [req.tenantId, status] : [req.tenantId]
-    );
-
-    sql += ` LIMIT ${Number(limit)} OFFSET ${offset}`;
-    const rows = await query(sql, params);
-
-    // Tags de cada conversación
-    for (const row of rows) {
-      row.tags = await query(
-        "SELECT category, value, color, source FROM tags WHERE target_type = 'conversation' AND target_id = ? AND tenant_id = ?",
-        [row.id, req.tenantId]
-      );
+    if (assigned_to) {
+      if (assigned_to === 'bot') {
+        sql += " AND COALESCE(c.assigned_to, 'bot') = 'bot'";
+      } else {
+        sql += ' AND c.assigned_to = ?';
+        params.push(assigned_to);
+      }
     }
 
-    res.json({ data: rows, pagination: { page: Number(page), limit: Number(limit), total, pages: Math.ceil(total / Number(limit)) } });
+    if (inbox_state && VALID_INBOX_STATES.has(inbox_state)) {
+      sql += ' AND c.inbox_state = ?';
+      params.push(inbox_state);
+    }
+
+    if (search) {
+      sql += ' AND (COALESCE(l.name, "") LIKE ? OR l.phone LIKE ? OR COALESCE(w.name, "") LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    sql += ' ORDER BY COALESCE(c.last_message_at, c.started_at) DESC';
+
+    const result = await queryPaginated(sql, params, { page: Number(page), limit: Number(limit) });
+    result.data = await attachTags(req.tenantId, result.data);
+    res.json(result);
   } catch (err) {
     console.error('[conversations GET]', err);
     res.status(500).json({ error: 'Error cargando conversaciones' });
   }
 });
 
-// GET /api/conversations/:id/messages — mensajes de una conversación
 router.get('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    // Verificar pertenencia al tenant
-    const convs = await query(
-      'SELECT id FROM conversations WHERE id = ? AND tenant_id = ?',
-      [req.params.id, req.tenantId]
-    );
-    if (convs.length === 0) return res.status(404).json({ error: 'Conversación no encontrada' });
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
 
     const messages = await query(
-      'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC',
+      `SELECT id, conversation_id, direction, sender, content_type, content, metadata, created_at
+       FROM messages
+       WHERE conversation_id = ?
+       ORDER BY created_at ASC, id ASC`,
       [req.params.id]
     );
 
-    res.json(messages);
+    res.json(messages.map((message) => ({
+      ...message,
+      metadata: parseJson(message.metadata),
+    })));
   } catch (err) {
     console.error('[conversations/:id/messages]', err);
-    res.status(500).json({ error: 'Error' });
+    res.status(500).json({ error: 'Error cargando mensajes' });
   }
 });
 
@@ -78,11 +159,8 @@ router.put('/:id/assign', authMiddleware, tenantMiddleware, async (req, res) => 
     }
 
     const { assigned_to } = req.body;
-    const convs = await query(
-      'SELECT id FROM conversations WHERE id = ? AND tenant_id = ?',
-      [req.params.id, req.tenantId]
-    );
-    if (convs.length === 0) {
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
       return res.status(404).json({ error: 'Conversación no encontrada' });
     }
 
@@ -101,10 +179,106 @@ router.put('/:id/assign', authMiddleware, tenantMiddleware, async (req, res) => 
       [assigned_to || 'bot', req.params.id, req.tenantId]
     );
 
+    broadcast('conversation:change', { id: Number(req.params.id), reason: 'assigned' }, req.tenantId);
     res.json({ message: 'Conversación asignada' });
   } catch (err) {
     console.error('[conversations assign]', err);
     res.status(500).json({ error: 'Error asignando conversación' });
+  }
+});
+
+router.put('/:id/inbox-state', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const { inbox_state } = req.body;
+    if (!VALID_INBOX_STATES.has(inbox_state)) {
+      return res.status(400).json({ error: 'Estado operativo inválido' });
+    }
+
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    await query(
+      'UPDATE conversations SET inbox_state = ? WHERE id = ? AND tenant_id = ?',
+      [inbox_state, req.params.id, req.tenantId]
+    );
+
+    broadcast('conversation:change', { id: Number(req.params.id), reason: 'inbox-state' }, req.tenantId);
+    res.json({ message: 'Estado operativo actualizado' });
+  } catch (err) {
+    console.error('[conversations inbox-state]', err);
+    res.status(500).json({ error: 'Error actualizando estado operativo' });
+  }
+});
+
+router.put('/:id/notes', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    await query(
+      'UPDATE conversations SET internal_notes = ? WHERE id = ? AND tenant_id = ?',
+      [req.body?.internal_notes || null, req.params.id, req.tenantId]
+    );
+
+    broadcast('conversation:change', { id: Number(req.params.id), reason: 'notes' }, req.tenantId);
+    res.json({ message: 'Notas internas guardadas' });
+  } catch (err) {
+    console.error('[conversations notes]', err);
+    res.status(500).json({ error: 'Error guardando notas internas' });
+  }
+});
+
+router.post('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const content = String(req.body?.content || '').trim();
+    if (!content) {
+      return res.status(400).json({ error: 'Mensaje vacío' });
+    }
+
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    if (conversation.channel !== 'telegram') {
+      return res.status(400).json({ error: 'Canal no soportado todavía para envío manual' });
+    }
+
+    const adapter = getTelegramAdapter();
+    const sent = await adapter.sendText(conversation.lead_phone, escapeHtml(content));
+
+    const result = await query(
+      `INSERT INTO messages (conversation_id, direction, sender, content, wa_message_id, content_type, created_at)
+       VALUES (?, 'outbound', ?, ?, ?, 'text', NOW())`,
+      [conversation.id, req.user?.username || 'admin', content, sent.messageId || '']
+    );
+
+    await query(
+      `UPDATE conversations
+       SET last_message_at = NOW(),
+           inbox_state = 'pending',
+           assigned_to = CASE
+             WHEN assigned_to IS NULL OR assigned_to = '' OR assigned_to = 'bot' THEN ?
+             ELSE assigned_to
+           END
+       WHERE id = ? AND tenant_id = ?`,
+      [req.user?.username || 'admin', conversation.id, req.tenantId]
+    );
+
+    broadcast('message:change', { conversationId: conversation.id, messageId: result.insertId, reason: 'manual-send' }, req.tenantId);
+    broadcast('conversation:change', { id: conversation.id, reason: 'manual-send' }, req.tenantId);
+
+    res.json({
+      id: result.insertId,
+      message: 'Mensaje enviado',
+    });
+  } catch (err) {
+    console.error('[conversations send message]', err);
+    res.status(500).json({ error: err.message || 'Error enviando mensaje' });
   }
 });
 

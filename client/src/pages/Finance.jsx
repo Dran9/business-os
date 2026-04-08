@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
+import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency } from '../utils/dates'
 
 const CATEGORIES = ['taller', 'publicidad', 'venue', 'materiales', 'herramientas', 'transporte', 'otros']
@@ -39,7 +40,7 @@ export default function Finance() {
   const [goalInput, setGoalInput] = useState('')
   const [editing, setEditing] = useState(null)
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const qs = new URLSearchParams({ month })
@@ -51,9 +52,11 @@ export default function Finance() {
         apiGet(`/api/finance/transactions?${qs.toString()}`),
       ])
 
-      setSummary(summaryData)
-      setTransactions(transactionsData.data || [])
-      setGoalInput(summaryData?.target_income != null ? String(summaryData.target_income) : '')
+      startTransition(() => {
+        setSummary(summaryData)
+        setTransactions(transactionsData.data || [])
+        setGoalInput(summaryData?.target_income != null ? String(summaryData.target_income) : '')
+      })
     } catch (err) {
       console.error(err)
       setSummary(null)
@@ -61,11 +64,15 @@ export default function Finance() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [categoryFilter, month, typeFilter])
 
   useEffect(() => {
     loadData()
-  }, [month, typeFilter, categoryFilter])
+  }, [loadData])
+
+  const { connected } = useAdminEvents({
+    'finance:change': loadData,
+  })
 
   async function handleGoalSave() {
     setSavingGoal(true)
@@ -90,7 +97,12 @@ export default function Finance() {
   return (
     <div>
       <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', rowGap: 'var(--space-3)' }}>
-        <h1 className="page-title">Finanzas</h1>
+        <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+          <h1 className="page-title">Finanzas</h1>
+          <span className={`live-indicator ${connected ? 'connected' : ''}`}>
+            {connected ? 'En vivo' : 'Reconectando'}
+          </span>
+        </div>
         <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
           <input type="month" className="input" style={{ width: 180 }} value={month} onChange={(e) => setMonth(e.target.value)} />
           <select className="input" style={{ width: 160 }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>

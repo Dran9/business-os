@@ -2,6 +2,7 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const { tenantMiddleware } = require('../middleware/tenant');
 const { query, queryPaginated } = require('../db');
+const { broadcast } = require('../services/adminEvents');
 
 const router = express.Router();
 
@@ -117,6 +118,7 @@ router.post('/transactions', authMiddleware, tenantMiddleware, async (req, res) 
     );
 
     res.json({ id: result.insertId, message: 'Transacción creada' });
+    broadcast('finance:change', { id: result.insertId, reason: 'transaction-created' }, req.tenantId);
   } catch (err) {
     console.error('[finance transactions POST]', err);
     res.status(500).json({ error: 'Error creando transacción' });
@@ -165,6 +167,7 @@ router.put('/transactions/:id', authMiddleware, tenantMiddleware, async (req, re
 
     params.push(req.params.id, req.tenantId);
     await query(`UPDATE transactions SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`, params);
+    broadcast('finance:change', { id: Number(req.params.id), reason: 'transaction-updated' }, req.tenantId);
     res.json({ message: 'Transacción actualizada' });
   } catch (err) {
     console.error('[finance transactions PUT]', err);
@@ -175,6 +178,7 @@ router.put('/transactions/:id', authMiddleware, tenantMiddleware, async (req, re
 router.delete('/transactions/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
     await query('DELETE FROM transactions WHERE id = ? AND tenant_id = ?', [req.params.id, req.tenantId]);
+    broadcast('finance:change', { id: Number(req.params.id), reason: 'transaction-deleted' }, req.tenantId);
     res.json({ message: 'Transacción eliminada' });
   } catch (err) {
     console.error('[finance transactions DELETE]', err);
@@ -202,6 +206,7 @@ router.put('/goals/current', authMiddleware, tenantMiddleware, async (req, res) 
         'UPDATE financial_goals SET target_income = ?, notes = ? WHERE id = ?',
         [target, req.body.notes || null, existing[0].id]
       );
+      broadcast('finance:change', { id: existing[0].id, reason: 'goal-updated' }, req.tenantId);
       return res.json({ id: existing[0].id, message: 'Meta actualizada' });
     }
 
@@ -211,6 +216,7 @@ router.put('/goals/current', authMiddleware, tenantMiddleware, async (req, res) 
       [req.tenantId, start, target, req.body.notes || null]
     );
 
+    broadcast('finance:change', { id: result.insertId, reason: 'goal-created' }, req.tenantId);
     res.json({ id: result.insertId, message: 'Meta creada' });
   } catch (err) {
     console.error('[finance goals PUT]', err);

@@ -4,6 +4,8 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { initializeDatabase } = require('./db');
+const authMiddleware = require('./middleware/auth');
+const { sseHandler } = require('./services/adminEvents');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,6 +24,8 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+app.get('/api/admin/events', authMiddleware, sseHandler);
 
 // --- Rutas API ---
 app.use('/api/auth', require('./routes/auth'));

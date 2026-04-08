@@ -1,5 +1,4 @@
-dns.setDefaultResultOrder('ipv4first');
-const dns = require('dns');
+require('dns').setDefaultResultOrder('ipv4first');
 const mysql = require('mysql2/promise');
 
 // --- Pool optimizado para Hostinger ---

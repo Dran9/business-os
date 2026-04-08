@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-DAs1UGHr.js";var t=e();function n(){return(0,t.jsxs)(`div`,{children:[(0,t.jsx)(`h1`,{className:`page-title`,children:`Talleres`}),(0,t.jsx)(`p`,{className:`text-muted mt-4`,children:`Catálogo de talleres — próximamente`})]})}export{n as default};

@@ -24,8 +24,8 @@ app.get('/api/health', (req, res) => {
 });
 
 // --- Rutas API ---
-// Se irán montando conforme se construyan:
-// app.use('/api/auth', require('./routes/auth'));
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/analytics', require('./routes/analytics'));
 // app.use('/api/webhook', require('./routes/webhook'));
 // app.use('/api/leads', require('./routes/leads'));
 // app.use('/api/workshops', require('./routes/workshops'));
@@ -33,7 +33,6 @@ app.get('/api/health', (req, res) => {
 // app.use('/api/playbooks', require('./routes/playbooks'));
 // app.use('/api/finance', require('./routes/finance'));
 // app.use('/api/campaigns', require('./routes/marketing'));
-// app.use('/api/analytics', require('./routes/analytics'));
 // app.use('/api/commands', require('./routes/commands'));
 // app.use('/api/settings', require('./routes/settings'));
 // app.use('/api/agenda', require('./routes/agenda-bridge'));

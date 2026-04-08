@@ -6,6 +6,7 @@ const {
   getPaymentQrAsset,
   getPaymentSettings,
 } = require('../paymentOptions');
+const { syncWorkshopParticipantCount } = require('../enrollments');
 
 function parseJson(value) {
   if (!value) return {};
@@ -336,7 +337,7 @@ async function maybeProcessPaymentProof({ tenantId, conversation, lead, incoming
       `INSERT INTO transactions (
          tenant_id, type, category, amount, currency, description, date,
          lead_id, workshop_id, payment_proof, payment_proof_type, verified, verification_method, ocr_data
-       ) VALUES (?, 'income', 'taller', ?, 'BOB', ?, CURDATE(), ?, ?, ?, ?, TRUE, 'ocr', ?)`,
+      ) VALUES (?, 'income', 'taller', ?, 'BOB', ?, CURDATE(), ?, ?, ?, ?, TRUE, 'ocr', ?)`,
       [
         tenantId,
         paymentContext.amount,
@@ -362,6 +363,10 @@ async function maybeProcessPaymentProof({ tenantId, conversation, lead, incoming
      WHERE id = ? AND tenant_id = ?`,
     [conversation.id, tenantId]
   );
+
+  if (enrollment) {
+    await syncWorkshopParticipantCount(tenantId, enrollment.workshop_id);
+  }
 
   return {
     type: 'text',

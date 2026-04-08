@@ -524,3 +524,112 @@ Se agregó soporte real para equipo interno dentro de una sola instalación. Aho
 ### Verificación hecha
 - `node --check` del backend modificado: OK
 - `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 5 (completada)
+
+### Resumen
+Se cerró la primera capa operativa de inscripciones dentro del admin. Ahora Daniel puede revisar enrollments desde la app, detectar comprobantes recibidos o mismatch, confirmar pagos manualmente y reenviar QR o instrucciones sin depender del bot. Esto convierte el flujo QR/OCR en un proceso realmente operable desde backoffice.
+
+### Lo implementado en esta sesión
+1. **Módulo admin de inscripciones**
+   - Nueva ruta: `server/routes/enrollments.js`
+   - Activada en `server/index.js` con `/api/enrollments`
+   - La lista devuelve enrollments con:
+     - lead
+     - taller
+     - monto
+     - asignado
+     - `ocr_data`
+     - estado derivado de revisión
+
+2. **Estados operativos de revisión**
+   - Se expone `review_state` para distinguir:
+     - `pending`
+     - `proof_received`
+     - `mismatch`
+     - `confirmed`
+   - El cálculo considera:
+     - `payment_status`
+     - `status`
+     - presencia de comprobante
+     - problemas OCR en `ocr_data.validation_problems`
+
+3. **Filtros de enrollments**
+   - `GET /api/enrollments` soporta:
+     - `workshop_id`
+     - `state`
+     - `assigned_to`
+     - `search`
+     - paginación
+   - Se puede filtrar por `bot` para ver conversaciones no asignadas
+
+4. **Acciones manuales sobre inscripciones**
+   - Endpoints nuevos:
+     - `POST /api/enrollments/:id/confirm`
+     - `POST /api/enrollments/:id/reject`
+     - `POST /api/enrollments/:id/resend-qr`
+     - `POST /api/enrollments/:id/resend-instructions`
+   - Solo `owner` y `admin` pueden gestionar estas acciones
+
+5. **Servicio centralizado de enrollments**
+   - Nuevo archivo: `server/services/enrollments.js`
+   - Funciones:
+     - `getEnrollmentWithRelations`
+     - `syncWorkshopParticipantCount`
+     - `resendPaymentInstructions`
+     - `resendPaymentQr`
+     - `confirmEnrollmentPayment`
+     - `rejectEnrollmentPayment`
+   - La confirmación manual:
+     - marca el enrollment como pagado
+     - crea o actualiza `transactions`
+     - convierte lead y conversación
+     - sincroniza `workshops.current_participants`
+   - El rechazo manual:
+     - mantiene historial
+     - agrega `mismatch_manual` en `ocr_data.validation_problems`
+     - deja el enrollment en estado pendiente para seguimiento
+
+6. **UI dentro de Talleres**
+   - `client/src/pages/Workshops.jsx` ahora incluye un bloque `Inscripciones`
+   - Muestra:
+     - lead
+     - taller
+     - monto
+     - estado
+     - asignado
+     - notas y problemas de validación
+   - Acciones disponibles en la tabla:
+     - confirmar pago
+     - rechazar
+     - reenviar QR
+     - reenviar instrucciones
+
+7. **Sincronización con workflow OCR**
+   - `server/services/chatbot/paymentWorkflow.js` ahora también llama `syncWorkshopParticipantCount` cuando el OCR confirma un pago automáticamente
+
+### Archivos creados/modificados en sesión 5
+- `server/routes/enrollments.js`
+- `server/services/enrollments.js`
+- `server/services/chatbot/paymentWorkflow.js`
+- `server/index.js`
+- `client/src/pages/Workshops.jsx`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Pendientes siguientes con más sentido
+- Crear una vista específica de enrollments si el volumen crece y `Workshops.jsx` empieza a quedar demasiado cargado
+- Permitir ver y descargar el comprobante subido desde admin
+- Añadir aprobación manual con monto corregido desde UI
+- Agregar notas internas por enrollment o conversación
+- Mover pricing/QR a nivel de taller si luego dejan de bastar las 4 opciones globales
+
+### Verificación hecha
+- `node --check server/index.js`: OK
+- `node --check server/routes/enrollments.js`: OK
+- `node --check server/services/enrollments.js`: OK
+- `node --check server/services/chatbot/paymentWorkflow.js`: OK
+- `cd client && npm run build`: OK

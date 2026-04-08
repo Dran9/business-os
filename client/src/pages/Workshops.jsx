@@ -14,11 +14,18 @@ const STATUS_CLASSES = {
 
 export default function Workshops() {
   const [workshops, setWorkshops] = useState([])
+  const [enrollments, setEnrollments] = useState([])
+  const [team, setTeam] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadingEnrollments, setLoadingEnrollments] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [workshopFilter, setWorkshopFilter] = useState('')
+  const [stateFilter, setStateFilter] = useState('')
+  const [assignedFilter, setAssignedFilter] = useState('')
+  const [search, setSearch] = useState('')
 
-  const load = useCallback(() => {
+  const loadWorkshops = useCallback(() => {
     setLoading(true)
     apiGet('/api/workshops')
       .then(r => setWorkshops(r.data || []))
@@ -26,7 +33,26 @@ export default function Workshops() {
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => { load() }, [load])
+  const loadEnrollments = useCallback(() => {
+    setLoadingEnrollments(true)
+    const params = new URLSearchParams({ limit: '100' })
+    if (workshopFilter) params.set('workshop_id', workshopFilter)
+    if (stateFilter) params.set('state', stateFilter)
+    if (assignedFilter) params.set('assigned_to', assignedFilter)
+    if (search) params.set('search', search)
+
+    apiGet(`/api/enrollments?${params.toString()}`)
+      .then(r => setEnrollments(r.data || []))
+      .catch(() => setEnrollments([]))
+      .finally(() => setLoadingEnrollments(false))
+  }, [workshopFilter, stateFilter, assignedFilter, search])
+
+  useEffect(() => {
+    loadWorkshops()
+    apiGet('/api/team').then(setTeam).catch(() => setTeam([]))
+  }, [loadWorkshops])
+
+  useEffect(() => { loadEnrollments() }, [loadEnrollments])
 
   function handleEdit(w) {
     setEditing(w)
@@ -41,7 +67,17 @@ export default function Workshops() {
   async function handleDelete(id) {
     if (!confirm('¿Eliminar este taller?')) return
     await apiDelete(`/api/workshops/${id}`)
-    load()
+    loadWorkshops()
+    loadEnrollments()
+  }
+
+  async function handleEnrollmentAction(id, action, body = null) {
+    try {
+      await apiPost(`/api/enrollments/${id}/${action}`, body || {})
+      await Promise.all([loadEnrollments(), loadWorkshops()])
+    } catch (err) {
+      alert(err.message)
+    }
   }
 
   return (
@@ -54,7 +90,7 @@ export default function Workshops() {
       {showForm && (
         <WorkshopForm
           workshop={editing}
-          onSave={() => { setShowForm(false); load() }}
+          onSave={() => { setShowForm(false); loadWorkshops(); loadEnrollments() }}
           onCancel={() => setShowForm(false)}
         />
       )}
@@ -98,8 +134,138 @@ export default function Workshops() {
           </table>
         </div>
       )}
+
+      <div className="card mt-6">
+        <div className="card-header">
+          <h2 className="card-title">Inscripciones</h2>
+        </div>
+        <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+          <select className="input" style={{ maxWidth: 220 }} value={workshopFilter} onChange={(e) => setWorkshopFilter(e.target.value)}>
+            <option value="">Todos los talleres</option>
+            {workshops.map((workshop) => (
+              <option key={workshop.id} value={workshop.id}>{workshop.name}</option>
+            ))}
+          </select>
+          <select className="input" style={{ maxWidth: 180 }} value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
+            <option value="">Todos los estados</option>
+            <option value="pending">Pendiente</option>
+            <option value="proof_received">Comprobante recibido</option>
+            <option value="confirmed">Confirmado</option>
+            <option value="mismatch">Mismatch</option>
+          </select>
+          <select className="input" style={{ maxWidth: 180 }} value={assignedFilter} onChange={(e) => setAssignedFilter(e.target.value)}>
+            <option value="">Todos los asignados</option>
+            <option value="bot">Bot / sin asignar</option>
+            {team.map((member) => (
+              <option key={member.id} value={member.username}>{member.display_name || member.username}</option>
+            ))}
+          </select>
+          <input
+            className="input"
+            style={{ maxWidth: 260 }}
+            placeholder="Buscar lead o taller..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        <div className="table-container mt-4">
+          {loadingEnrollments ? (
+            <p className="text-muted">Cargando inscripciones...</p>
+          ) : enrollments.length === 0 ? (
+            <p className="text-muted">No hay inscripciones para este filtro.</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Lead</th>
+                  <th>Taller</th>
+                  <th>Monto</th>
+                  <th>Estado</th>
+                  <th>Asignado</th>
+                  <th>Notas</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {enrollments.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <div className="font-semibold">{item.lead_name || 'Sin nombre'}</div>
+                      <div className="text-xs text-muted">{item.lead_phone}</div>
+                    </td>
+                    <td>
+                      <div className="font-semibold">{item.workshop_name}</div>
+                      <div className="text-xs text-muted">{item.workshop_date ? formatDate(item.workshop_date) : 'Sin fecha'}</div>
+                    </td>
+                    <td>{formatCurrency(item.amount_due || item.amount_paid || 0)}</td>
+                    <td><span className={reviewStateClasses(item.review_state)}>{reviewStateLabel(item.review_state)}</span></td>
+                    <td className="text-secondary">{item.assigned_to || 'bot'}</td>
+                    <td>
+                      <div className="text-sm">{item.notes || '—'}</div>
+                      {Array.isArray(item.ocr_data?.validation_problems) && item.ocr_data.validation_problems.length > 0 && (
+                        <div className="text-xs text-muted" style={{ marginTop: 4 }}>
+                          {item.ocr_data.validation_problems.map((problem, index) => (
+                            <div key={index}>• {formatValidationProblem(problem)}</div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleEnrollmentAction(item.id, 'confirm')}>
+                          Confirmar pago
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            const reason = window.prompt('Motivo del rechazo o mismatch:', item.notes || '')
+                            if (reason == null) return
+                            handleEnrollmentAction(item.id, 'reject', { reason })
+                          }}
+                        >
+                          Rechazar
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleEnrollmentAction(item.id, 'resend-qr')}>
+                          Reenviar QR
+                        </button>
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleEnrollmentAction(item.id, 'resend-instructions')}>
+                          Reenviar instrucciones
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   )
+}
+
+function reviewStateLabel(value) {
+  if (value === 'confirmed') return 'Confirmado'
+  if (value === 'proof_received') return 'Comprobante recibido'
+  if (value === 'mismatch') return 'Mismatch'
+  return 'Pendiente'
+}
+
+function reviewStateClasses(value) {
+  if (value === 'confirmed') return 'badge badge-success'
+  if (value === 'proof_received') return 'badge badge-info'
+  if (value === 'mismatch') return 'badge badge-danger'
+  return 'badge badge-warning'
+}
+
+function formatValidationProblem(problem) {
+  if (problem?.type === 'destinatario') return 'Cuenta destino no válida'
+  if (problem?.type === 'monto') return 'Monto no coincide'
+  if (problem?.type === 'fecha_pasada') return 'Fecha anterior al QR enviado'
+  if (problem?.type === 'mismatch_manual') return problem.reason || 'Mismatch manual'
+  return 'Validación pendiente'
 }
 
 function WorkshopForm({ workshop, onSave, onCancel }) {

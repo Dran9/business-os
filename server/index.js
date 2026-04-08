@@ -29,6 +29,7 @@ app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/webhook', require('./routes/webhook'));
 app.use('/api/leads', require('./routes/leads'));
 app.use('/api/workshops', require('./routes/workshops'));
+app.use('/api/enrollments', require('./routes/enrollments'));
 app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/finance', require('./routes/finance'));
 app.use('/api/team', require('./routes/team'));

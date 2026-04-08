@@ -185,6 +185,37 @@ Cron           → followups, reminders, analysis batch
   - fecha del comprobante no anterior al último QR enviado
 - `client/src/pages/Settings.jsx` ya permite subir los 4 QR y definir cuentas destino válidas
 
+## Estado funcional añadido en sesión 5
+- Nuevo módulo `server/routes/enrollments.js`
+- Nuevo servicio `server/services/enrollments.js`
+- `server/index.js` ahora expone `/api/enrollments`
+- `client/src/pages/Workshops.jsx` ahora incluye una vista operativa de inscripciones dentro del módulo de talleres
+- La vista de inscripciones permite filtrar por:
+  - taller
+  - estado de revisión
+  - asignado
+  - búsqueda por lead o taller
+- Estados operativos visibles:
+  - pendiente
+  - comprobante recibido
+  - mismatch
+  - confirmado
+- Acciones manuales disponibles desde admin:
+  - confirmar pago
+  - rechazar comprobante
+  - reenviar QR
+  - reenviar instrucciones
+- La confirmación manual:
+  - confirma `enrollment`
+  - crea o actualiza `transactions`
+  - convierte lead y conversación
+  - sincroniza `current_participants` del taller
+- El rechazo manual:
+  - conserva historial
+  - agrega `mismatch_manual` a `ocr_data.validation_problems`
+  - mantiene el enrollment en revisión operativa
+- El workflow OCR automático ahora también sincroniza `current_participants` cuando valida un pago
+
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar
 - Acciones sobre talleres: broadcast, recordatorio, clonar

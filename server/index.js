@@ -26,10 +26,10 @@ app.get('/api/health', (req, res) => {
 // --- Rutas API ---
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/analytics', require('./routes/analytics'));
-// app.use('/api/webhook', require('./routes/webhook'));
-// app.use('/api/leads', require('./routes/leads'));
-// app.use('/api/workshops', require('./routes/workshops'));
-// app.use('/api/conversations', require('./routes/conversations'));
+app.use('/api/webhook', require('./routes/webhook'));
+app.use('/api/leads', require('./routes/leads'));
+app.use('/api/workshops', require('./routes/workshops'));
+app.use('/api/conversations', require('./routes/conversations'));
 // app.use('/api/playbooks', require('./routes/playbooks'));
 // app.use('/api/finance', require('./routes/finance'));
 // app.use('/api/campaigns', require('./routes/marketing'));

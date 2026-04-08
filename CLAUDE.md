@@ -12,12 +12,21 @@ Daniel MacLean — psicólogo en Cochabamba, Bolivia
 - WhatsApp Business: 59169650802
 - Negocio: talleres de constelaciones familiares, coaching, desarrollo personal
 
+## URLs
+- **App**: https://darkred-kangaroo-559638.hostingersite.com/
+- **Health**: https://darkred-kangaroo-559638.hostingersite.com/api/health
+- **Repo**: https://github.com/Dran9/business-os.git
+- **PIN admin**: 4747
+
 ## Stack
 - **Server:** Express + MySQL (Hostinger) — `server/`
-- **Client:** React 18 + Vite + Tailwind + shadcn/ui — `client/`
+- **Client:** React 18 + Vite 8 + CSS custom properties — `client/`
 - **LLM:** Groq (gratis) para tagging + DeepSeek para conversaciones
-- **Integraciones:** WhatsApp Cloud API, Google Vision OCR, Pushinator, Meta Graph API
-- **Deploy:** Hostinger Business Web Hosting (segundo sitio)
+- **Chat canal dev:** Telegram Bot API (testing/desarrollo)
+- **Chat canal prod:** WhatsApp Cloud API (futuro, cuando tenga otro chip)
+- **Integraciones:** Google Vision OCR, Pushinator, Meta Graph API (futuro)
+- **Deploy:** Hostinger Business Web Hosting (segundo sitio Node.js)
+- **Auth:** PIN de 4 dígitos, JWT 90 días
 
 ## Proyecto hermano
 - **Agenda 4.0:** `/Users/dran/Documents/Codex openai/agenda4.0/`

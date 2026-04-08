@@ -1,0 +1,13 @@
+{
+  "name": "business-os",
+  "version": "0.1.0",
+  "description": "Sistema operativo para negocio de talleres terapéuticos",
+  "scripts": {
+    "dev": "cd server && node index.js",
+    "build": "echo 'client/dist is pre-built and committed -- skipping build'",
+    "start": "cd server && node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

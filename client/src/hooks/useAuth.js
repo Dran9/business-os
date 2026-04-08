@@ -17,11 +17,11 @@ export function useAuth() {
     return () => window.removeEventListener('storage', onStorage)
   }, [])
 
-  const login = useCallback(async (username, password) => {
+  const login = useCallback(async (pin) => {
     setLoading(true)
     setError(null)
     try {
-      const data = await apiPost('/api/auth/login', { username, password })
+      const data = await apiPost('/api/auth/login', { pin })
       setToken(data.token)
       setAuthed(true)
       return true

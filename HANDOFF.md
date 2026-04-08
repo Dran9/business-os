@@ -292,6 +292,145 @@ Se integró una primera capa real de IA y análisis sobre el chatbot, se habilit
 
 ---
 
+## Estado actual: 2026-04-08 — SESIÓN 4 (completada)
+
+### Resumen
+Se integró la base de cobros por QR y OCR para Business OS, tomando como referencia operativa el flujo de `agenda4.0`. Ahora la app ya soporta 4 opciones configurables de pago con QR, envío del QR correcto por Telegram y validación automática de comprobantes usando Google Vision con las 3 reglas clave: destinatario, monto y fecha contra el último contexto de pago enviado.
+
+### Qué se tomó de agenda4.0 como inspiración real
+- **Configuración admin de QR**: upload simple desde panel, una tarjeta por opción
+- **OCR por Google Vision**: parsing de comprobantes bolivianos
+- **Validación correcta del comprobante**:
+  1. cuenta destino válida
+  2. monto correcto
+  3. fecha del comprobante no anterior al último QR/recordatorio enviado
+- **Decisión importante**: validar contra el último contexto de pago enviado, no contra la fecha del taller
+
+### Lo implementado en esta sesión
+1. **Configuración de cobros**
+   - Nueva ruta: `server/routes/settings.js`
+   - Endpoints:
+     - `GET /api/settings/payment-options`
+     - `PUT /api/settings/payment-options`
+     - `POST /api/settings/payment-options/:slot/qr`
+     - `GET /api/settings/payment-options/:slot/qr`
+   - 4 slots configurables por instalación:
+     - etiqueta
+     - monto
+     - activo/inactivo
+     - imagen QR
+   - Esto permite casos como:
+     - `Precio constelar`
+     - `Precio participar`
+     - más 2 opciones extra si se necesitan
+
+2. **Schema y storage**
+   - `tenants` ahora guarda:
+     - `payment_options` (JSON)
+     - `payment_destination_accounts` (TEXT)
+     - `payment_qr_1..4`
+     - `payment_qr_1_mime..payment_qr_4_mime`
+   - `enrollments` ahora guarda:
+     - `payment_requested_at`
+     - `verified_at`
+     - `payment_proof`
+     - `payment_proof_type`
+     - `ocr_data`
+
+3. **OCR**
+   - Nuevo archivo: `server/services/ocr.js`
+   - Usa `GOOGLE_VISION_API_KEY`
+   - Extrae:
+     - nombre
+     - monto
+     - fecha
+     - hora si aparece
+     - referencia
+     - banco
+     - cuenta destino
+     - texto raw
+
+4. **Workflow de cobro en chatbot**
+   - Nuevo archivo: `server/services/chatbot/paymentWorkflow.js`
+   - Al tocar `inscribir_<id>`:
+     - se crea o actualiza `enrollment`
+     - si hay una sola opción activa, el bot manda el QR directamente
+     - si hay varias opciones activas, el bot pide elegir una
+   - Al tocar `payopt_<slot>`:
+     - se manda el QR correcto por Telegram
+     - se guarda contexto de pago en `conversations.metadata.payment_request`
+
+5. **Comprobante por Telegram**
+   - `server/services/channels/telegram.js` ahora:
+     - detecta `mediaFileId`, nombre y mime
+     - puede descargar el archivo real desde Telegram
+     - puede enviar imágenes por buffer, no solo por URL
+   - `server/services/chatbot/engine.js` ahora procesa imágenes/documentos como posible comprobante
+
+6. **Validación automática**
+   - Si llega imagen/documento y existe contexto de pago:
+     - se descarga el archivo
+     - se corre OCR
+     - se validan 3 reglas:
+       1. **destinatario**: la cuenta destino detectada debe estar en `payment_destination_accounts`
+       2. **monto**: debe coincidir con la opción de pago enviada
+       3. **fecha**: no puede ser anterior al momento en que se mandó el QR
+   - Si pasa:
+     - `enrollment.payment_status = 'paid'`
+     - `enrollment.status = 'confirmed'`
+     - se crea o actualiza `transactions` como ingreso verificado por OCR
+     - lead y conversación pasan a `converted`
+   - Si falla:
+     - se guarda el comprobante igual
+     - se guardan problemas en `ocr_data`
+     - se responde con mensaje de mismatch entendible
+
+7. **Settings UI**
+   - `client/src/pages/Settings.jsx` ahora tiene sección de:
+     - equipo interno
+     - cobros, QR y OCR
+   - Se pueden:
+     - cargar 4 QRs
+     - definir etiqueta y monto por slot
+     - activar/desactivar slots
+     - definir cuentas destino válidas para OCR
+
+8. **Infra / dependencia**
+   - Se instaló `multer` en raíz para uploads multipart
+   - `.env.example` ahora incluye `TELEGRAM_BOT_TOKEN`
+
+### Archivos creados/modificados en sesión 4
+- `server/routes/settings.js`
+- `server/services/paymentOptions.js`
+- `server/services/ocr.js`
+- `server/services/chatbot/paymentWorkflow.js`
+- `server/db.js`
+- `server/middleware/tenant.js`
+- `server/index.js`
+- `server/services/channels/base.js`
+- `server/services/channels/telegram.js`
+- `server/services/chatbot/engine.js`
+- `client/src/utils/api.js`
+- `client/src/pages/Settings.jsx`
+- `.env.example`
+- `package.json`
+- `package-lock.json`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Límites actuales / siguientes pasos
+- Las 4 opciones de pago son globales por instalación, no por taller
+- Para el caso de Daniel eso alcanza bien para `constelar` y `participar`, pero si luego hay pricing muy distinto por cada taller convendría volverlo por workshop
+- La validación de fecha hoy compara correctamente contra el contexto del QR enviado; si más adelante se necesita precisión horaria estricta, se puede endurecer usando hora OCR cuando el banco la exponga bien
+- Falta exponer en UI una vista clara de enrollments y pagos verificados/mismatch
+
+### Verificación hecha
+- `node --check` del backend modificado: OK
+- `cd client && npm run build`: OK
+
+---
+
 ## Estado actual: 2026-04-08 — SESIÓN 3 (completada)
 
 ### Resumen

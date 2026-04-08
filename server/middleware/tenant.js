@@ -25,7 +25,7 @@ async function tenantMiddleware(req, res, next) {
 
     const tenant = rows[0];
     // Parse JSON fields
-    for (const field of ['brand_config', 'wa_config', 'llm_config', 'google_config', 'meta_config', 'push_config', 'agenda_config', 'features_enabled']) {
+    for (const field of ['brand_config', 'wa_config', 'llm_config', 'google_config', 'meta_config', 'push_config', 'agenda_config', 'features_enabled', 'payment_options']) {
       if (tenant[field] && typeof tenant[field] === 'string') {
         try { tenant[field] = JSON.parse(tenant[field]); } catch {}
       }

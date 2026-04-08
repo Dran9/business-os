@@ -2,6 +2,7 @@ const { query } = require('../../db');
 const { generateInterestedReply } = require('./llm');
 const { analyzeAndTagInboundMessage } = require('../analysis/tagger');
 const { recalculateLeadScore } = require('../analysis/scorer');
+const { buildEnrollmentPrompt, buildPaymentQrResponse, maybeProcessPaymentProof } = require('./paymentWorkflow');
 
 /**
  * Motor de chatbot — agnóstico al canal.
@@ -61,6 +62,21 @@ class ChatbotEngine {
       }).catch((err) => {
         console.error('[ChatbotEngine] Scoring skipped by error:', err.message);
       });
+
+      const paymentProofResponse = await maybeProcessPaymentProof({
+        tenantId: this.tenantId,
+        conversation,
+        lead,
+        incoming,
+      }).catch((err) => {
+        console.error('[ChatbotEngine] OCR skipped by error:', err.message);
+        return null;
+      });
+
+      if (paymentProofResponse) {
+        await this.sendResponse(senderId, conversation.id, paymentProofResponse);
+        return;
+      }
 
       // 5. Procesar según fase del playbook
       const response = await this.processPhase(conversation, lead, text, contentType);
@@ -290,6 +306,11 @@ class ChatbotEngine {
       return this.handleEnrollmentIntent(conversation, lead, parseInt(enrollMatch[1]));
     }
 
+    const paymentOptionMatch = text.match(/^payopt_(\d+)$/);
+    if (paymentOptionMatch) {
+      return this.handlePaymentOptionSelection(conversation, lead, parseInt(paymentOptionMatch[1]));
+    }
+
     if (/hablar|daniel/i.test(text)) {
       await query('UPDATE conversations SET status = "escalated", escalated_at = NOW() WHERE id = ?', [conversation.id]);
       return { type: 'text', text: 'Daniel te escribirá pronto.' };
@@ -390,10 +411,33 @@ class ChatbotEngine {
       console.error('[ChatbotEngine] No se pudo crear enrollment:', err.message);
     });
 
-    return {
+    const paymentPrompt = await buildEnrollmentPrompt({
+      tenantId: this.tenantId,
+      workshopId: workshop.id,
+    });
+
+    if (paymentPrompt.response?.type === 'buttons' && paymentPrompt.response.buttons?.length === 1) {
+      const buttonId = paymentPrompt.response.buttons[0]?.id || '';
+      const slot = Number(String(buttonId).replace('payopt_', ''));
+      if (slot) {
+        return this.handlePaymentOptionSelection(conversation, lead, slot);
+      }
+    }
+
+    return paymentPrompt.response || {
       type: 'text',
       text: `Perfecto. Ya registré tu interés para ${workshop.name}. Daniel te compartirá el cobro y los siguientes pasos para confirmar tu inscripción.`,
     };
+  }
+
+  async handlePaymentOptionSelection(conversation, lead, slot) {
+    return buildPaymentQrResponse({
+      tenantId: this.tenantId,
+      conversationId: conversation.id,
+      leadId: lead.id,
+      workshopId: conversation.workshop_id,
+      slot,
+    });
   }
 
   // --- Helpers ---
@@ -471,7 +515,7 @@ class ChatbotEngine {
         break;
 
       case 'image':
-        const r3 = await this.channel.sendImage(recipientId, response.image, response.caption);
+        const r3 = await this.channel.sendImage(recipientId, response.image, response.caption, response.mimeType);
         sentMessageId = r3.messageId;
         break;
     }

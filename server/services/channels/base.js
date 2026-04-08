@@ -45,6 +45,10 @@ class ChannelAdapter {
     throw new Error('sendImage() not implemented');
   }
 
+  async getMedia(fileId, options = {}) {
+    throw new Error('getMedia() not implemented');
+  }
+
   /**
    * Nombre del canal
    * @returns {string}

@@ -32,6 +32,7 @@ app.use('/api/workshops', require('./routes/workshops'));
 app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/finance', require('./routes/finance'));
 app.use('/api/team', require('./routes/team'));
+app.use('/api/settings', require('./routes/settings'));
 // app.use('/api/playbooks', require('./routes/playbooks'));
 // app.use('/api/campaigns', require('./routes/marketing'));
 // app.use('/api/commands', require('./routes/commands'));

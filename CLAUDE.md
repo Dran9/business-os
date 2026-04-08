@@ -124,6 +124,7 @@ Cron           → followups, reminders, analysis batch
 - `financial_goals` por período
 - Integración con Agenda 4.0 para ingresos de terapia individual
 - Balance items (activos, pasivos)
+- Los pagos de talleres confirmados por OCR se registran como `transactions` verificadas
 
 ### 5. Marketing / Publicidad
 - Catálogo de talleres (`workshops`) como productos
@@ -159,6 +160,30 @@ Cron           → followups, reminders, analysis batch
 - Sidebar muestra usuario y rol activos
 - La lista de conversaciones muestra a quién está asignado cada chat
 - `GET /api/leads/stats/summary` quedó corregido en el orden de rutas
+
+## Estado funcional añadido en sesión 4
+- `server/routes/settings.js` gestiona opciones de cobro y subida de QR
+- Hay 4 slots de cobro configurables por instalación:
+  - etiqueta
+  - monto
+  - activo/inactivo
+  - imagen QR
+- Se pueden usar etiquetas como `Precio constelar` y `Precio participar`
+- `tenants` ahora guarda:
+  - `payment_options`
+  - `payment_destination_accounts`
+  - `payment_qr_1..4`
+- `server/services/ocr.js` integra Google Vision para comprobantes
+- `server/services/chatbot/paymentWorkflow.js` maneja:
+  - selección de opción de cobro
+  - envío de QR por Telegram
+  - contexto de pago en conversación
+  - validación OCR del comprobante
+- Reglas OCR heredadas de agenda4.0:
+  - destinatario/cuenta destino válida
+  - monto correcto
+  - fecha del comprobante no anterior al último QR enviado
+- `client/src/pages/Settings.jsx` ya permite subir los 4 QR y definir cuentas destino válidas
 
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar

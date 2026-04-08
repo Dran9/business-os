@@ -77,3 +77,25 @@ export function apiPut(path, body) {
 export function apiDelete(path) {
   return api(path, { method: 'DELETE' });
 }
+
+export async function apiUpload(path, formData, method = 'POST') {
+  const token = getToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers,
+    body: formData,
+  });
+
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = '/login';
+    throw new Error('Sesión expirada');
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Error ${res.status}`);
+  }
+  return data;
+}

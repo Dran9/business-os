@@ -94,6 +94,16 @@ async function initializeDatabase() {
         meta_config JSON,
         push_config JSON,
         agenda_config JSON,
+        payment_options JSON,
+        payment_destination_accounts TEXT,
+        payment_qr_1 MEDIUMBLOB,
+        payment_qr_1_mime VARCHAR(100),
+        payment_qr_2 MEDIUMBLOB,
+        payment_qr_2_mime VARCHAR(100),
+        payment_qr_3 MEDIUMBLOB,
+        payment_qr_3_mime VARCHAR(100),
+        payment_qr_4 MEDIUMBLOB,
+        payment_qr_4_mime VARCHAR(100),
         features_enabled JSON,
         plan ENUM('free','pro','enterprise') DEFAULT 'pro',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -354,6 +364,11 @@ async function initializeDatabase() {
         enrolled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         confirmed_at DATETIME,
         cancelled_at DATETIME,
+        payment_requested_at DATETIME,
+        verified_at DATETIME,
+        payment_proof MEDIUMBLOB,
+        payment_proof_type VARCHAR(100),
+        ocr_data JSON,
         notes TEXT,
         UNIQUE KEY uk_workshop_lead (workshop_id, lead_id),
         KEY idx_tenant (tenant_id),
@@ -451,6 +466,7 @@ async function initializeDatabase() {
             fontFamily: 'Inter, system-ui, sans-serif'
           })}',
           '${JSON.stringify({
+            payment_options: true,
             chatbot: true,
             finance: true,
             marketing: true,
@@ -477,6 +493,21 @@ async function initializeDatabase() {
 
     await conn.execute('ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS display_name VARCHAR(200)').catch(() => {});
     await conn.execute('ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_options JSON').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_destination_accounts TEXT').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_1 MEDIUMBLOB').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_1_mime VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_2 MEDIUMBLOB').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_2_mime VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_3 MEDIUMBLOB').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_3_mime VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_4 MEDIUMBLOB').catch(() => {});
+    await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_4_mime VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_requested_at DATETIME').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS verified_at DATETIME').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof MEDIUMBLOB').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof_type VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS ocr_data JSON').catch(() => {});
     await conn.execute(
       "UPDATE admin_users SET display_name = 'Daniel' WHERE username = 'owner' AND (display_name IS NULL OR display_name = '')"
     ).catch(() => {});

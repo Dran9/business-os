@@ -5,6 +5,45 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 17 (completada)
+
+### Resumen
+Se corrigió el módulo `Configuración` para que deje de resetear campos de cobro mientras el usuario está editando y para que muestre una confirmación visible cuando los cambios quedan guardados.
+
+### Lo implementado en esta sesión
+1. **Fix de reseteo en Configuración**
+   - `client/src/pages/Settings.jsx`
+   - la pantalla ahora distingue entre:
+     - configuración ya cargada
+     - cambios locales sin guardar
+   - si llega una carga tardía del backend, ya no pisa el formulario local si el usuario empezó a editar
+
+2. **Fix al subir QR**
+   - al subir un QR ya no se reemplaza todo `paymentSettings`
+   - solo se sincroniza `has_qr` del slot correspondiente
+   - esto evita perder cambios no guardados en:
+     - etiqueta
+     - monto
+     - activo/inactivo
+     - cuentas destino OCR
+
+3. **Señal visible de guardado**
+   - se agregó feedback inline en Configuración:
+     - `Guardando cambios...`
+     - `Hay cambios sin guardar`
+     - `Cambios guardados`
+   - además se muestra un aviso superior de éxito cuando:
+     - se guarda configuración de cobro
+     - se sube un QR
+     - se crea/edita/elimina un usuario
+     - se cambia el PIN
+
+4. **Verificación**
+   - `npm run build` en `client/`: OK
+   - el intento de `node --check` sobre `Settings.jsx` no aplica porque Node no parsea `.jsx` de esa forma; la validación real aquí fue el build de Vite
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 16 (completada)
 
 ### Resumen

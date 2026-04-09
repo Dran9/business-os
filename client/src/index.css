@@ -722,6 +722,26 @@ body {
   background: var(--color-success);
 }
 
+.inline-notice {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.inline-notice-success {
+  background: var(--color-success-bg);
+  border-color: color-mix(in srgb, var(--color-success) 25%, var(--color-border));
+  color: var(--color-success);
+}
+
+.inline-notice-warning {
+  background: var(--color-warning-bg);
+  border-color: color-mix(in srgb, var(--color-warning) 25%, var(--color-border));
+  color: var(--color-warning);
+}
+
 /* --- MOBILE MENU --- */
 .mobile-menu-btn {
   display: none;

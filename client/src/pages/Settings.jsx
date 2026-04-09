@@ -47,6 +47,9 @@ export default function Settings({ currentUser }) {
   const [saving, setSaving] = useState(false)
   const [savingPayment, setSavingPayment] = useState(false)
   const [savingSecurity, setSavingSecurity] = useState(false)
+  const [paymentLoaded, setPaymentLoaded] = useState(false)
+  const [paymentDirty, setPaymentDirty] = useState(false)
+  const [notice, setNotice] = useState(null)
   const [form, setForm] = useState(initialCreateForm())
   const [securityForm, setSecurityForm] = useState(initialSecurityForm())
   const [editingId, setEditingId] = useState(null)
@@ -72,14 +75,19 @@ export default function Settings({ currentUser }) {
         const [teamRows, activityRows, paymentData] = results
         setTeam(teamRows)
         setActivity(activityRows)
-        if (paymentData) setPaymentSettings(paymentData)
+        if (paymentData && !paymentDirty) {
+          setPaymentSettings(paymentData)
+        }
       } else {
         const [paymentData] = results
         setTeam([])
         setActivity([])
-        if (paymentData) setPaymentSettings(paymentData)
+        if (paymentData && !paymentDirty) {
+          setPaymentSettings(paymentData)
+        }
       }
     } finally {
+      setPaymentLoaded(true)
       setLoading(false)
     }
   }
@@ -87,6 +95,17 @@ export default function Settings({ currentUser }) {
   useEffect(() => {
     load()
   }, [canManageTeam])
+
+  useEffect(() => {
+    if (!notice) return undefined
+    const timeout = window.setTimeout(() => setNotice(null), 4000)
+    return () => window.clearTimeout(timeout)
+  }, [notice])
+
+  function markPaymentDirty() {
+    setPaymentDirty(true)
+    setNotice(null)
+  }
 
   async function savePaymentSettings() {
     setSavingPayment(true)
@@ -101,6 +120,9 @@ export default function Settings({ currentUser }) {
       }
       const updated = await apiPut('/api/settings/payment-options', payload)
       setPaymentSettings(updated)
+      setPaymentDirty(false)
+      setPaymentLoaded(true)
+      setNotice({ type: 'success', text: 'Configuración de cobro guardada correctamente.' })
     } catch (err) {
       alert(err.message)
     } finally {
@@ -114,6 +136,7 @@ export default function Settings({ currentUser }) {
     try {
       await apiPost('/api/team', form)
       setForm(initialCreateForm())
+      setNotice({ type: 'success', text: 'Usuario creado correctamente.' })
       await load()
     } catch (err) {
       alert(err.message)
@@ -135,7 +158,7 @@ export default function Settings({ currentUser }) {
         new_pin: securityForm.new_pin,
       })
       setSecurityForm(initialSecurityForm())
-      alert('PIN actualizado')
+      setNotice({ type: 'success', text: 'PIN actualizado correctamente.' })
       if (canManageTeam) {
         await load()
       }
@@ -176,6 +199,7 @@ export default function Settings({ currentUser }) {
         setStoredUser(response.user)
       }
       cancelEdit()
+      setNotice({ type: 'success', text: 'Cambios del usuario guardados correctamente.' })
       await load()
     } catch (err) {
       alert(err.message)
@@ -185,6 +209,11 @@ export default function Settings({ currentUser }) {
   return (
     <div>
       <h1 className="page-title">Configuración</h1>
+      {notice && (
+        <div className={`inline-notice inline-notice-${notice.type} mt-4`}>
+          {notice.text}
+        </div>
+      )}
 
       <div className="card mt-4">
         <div className="card-header">
@@ -300,10 +329,13 @@ export default function Settings({ currentUser }) {
                 <input
                   className="input"
                   value={option.label}
-                  onChange={(event) => setPaymentSettings((current) => ({
-                    ...current,
-                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item),
-                  }))}
+                  onChange={(event) => {
+                    setPaymentSettings((current) => ({
+                      ...current,
+                      payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item),
+                    }))
+                    markPaymentDirty()
+                  }}
                 />
               </div>
               <div className="form-group">
@@ -312,10 +344,13 @@ export default function Settings({ currentUser }) {
                   className="input"
                   type="number"
                   value={option.amount ?? ''}
-                  onChange={(event) => setPaymentSettings((current) => ({
-                    ...current,
-                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item),
-                  }))}
+                  onChange={(event) => {
+                    setPaymentSettings((current) => ({
+                      ...current,
+                      payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item),
+                    }))
+                    markPaymentDirty()
+                  }}
                 />
               </div>
               <div className="form-group">
@@ -323,10 +358,13 @@ export default function Settings({ currentUser }) {
                 <select
                   className="input"
                   value={option.active ? '1' : '0'}
-                  onChange={(event) => setPaymentSettings((current) => ({
-                    ...current,
-                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, active: event.target.value === '1' } : item),
-                  }))}
+                  onChange={(event) => {
+                    setPaymentSettings((current) => ({
+                      ...current,
+                      payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, active: event.target.value === '1' } : item),
+                    }))
+                    markPaymentDirty()
+                  }}
                 >
                   <option value="1">Sí</option>
                   <option value="0">No</option>
@@ -346,7 +384,14 @@ export default function Settings({ currentUser }) {
                     try {
                       await apiUpload(`/api/settings/payment-options/${option.slot}/qr`, formData)
                       const updated = await apiGet('/api/settings/payment-options')
-                      setPaymentSettings(updated)
+                      setPaymentSettings((current) => ({
+                        ...current,
+                        payment_options: current.payment_options.map((item) => {
+                          const serverOption = updated.payment_options.find((serverItem) => serverItem.slot === item.slot)
+                          return serverOption ? { ...item, has_qr: serverOption.has_qr } : item
+                        }),
+                      }))
+                      setNotice({ type: 'success', text: `QR del slot ${option.slot} subido correctamente.` })
                     } catch (err) {
                       alert(err.message)
                     }
@@ -370,13 +415,16 @@ export default function Settings({ currentUser }) {
             className="input textarea"
             rows={5}
             value={Array.isArray(paymentSettings.payment_destination_accounts) ? paymentSettings.payment_destination_accounts.join('\n') : ''}
-            onChange={(event) => setPaymentSettings((current) => ({
-              ...current,
-              payment_destination_accounts: event.target.value
-                .split('\n')
-                .map((item) => item.trim())
-                .filter(Boolean),
-            }))}
+            onChange={(event) => {
+              setPaymentSettings((current) => ({
+                ...current,
+                payment_destination_accounts: event.target.value
+                  .split('\n')
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              }))
+              markPaymentDirty()
+            }}
             placeholder={'Una cuenta por línea\nEjemplo:\n30151182874355\n6896894011'}
           />
           <p className="text-muted text-sm mt-4">El OCR validará el comprobante solo si detecta una de estas cuentas como destino.</p>
@@ -385,6 +433,15 @@ export default function Settings({ currentUser }) {
         <button type="button" className="btn btn-primary" disabled={savingPayment} onClick={savePaymentSettings}>
           {savingPayment ? 'Guardando...' : 'Guardar configuración de cobro'}
         </button>
+        <div className="mt-4">
+          {savingPayment ? (
+            <span className="badge badge-info">Guardando cambios...</span>
+          ) : paymentDirty ? (
+            <span className="badge badge-warning">Hay cambios sin guardar</span>
+          ) : paymentLoaded ? (
+            <span className="badge badge-success">Cambios guardados</span>
+          ) : null}
+        </div>
       </div>
 
       {canManageTeam && (
@@ -429,6 +486,7 @@ export default function Settings({ currentUser }) {
                                 onClick={async () => {
                                   try {
                                     await apiPut(`/api/team/${member.id}`, { active: !member.active })
+                                    setNotice({ type: 'success', text: 'Estado del usuario actualizado correctamente.' })
                                     await load()
                                   } catch (err) {
                                     alert(err.message)
@@ -446,6 +504,7 @@ export default function Settings({ currentUser }) {
                                   if (!confirm(`¿Eliminar a ${member.username}?`)) return
                                   try {
                                     await apiDelete(`/api/team/${member.id}`)
+                                    setNotice({ type: 'success', text: 'Usuario eliminado correctamente.' })
                                     await load()
                                   } catch (err) {
                                     alert(err.message)

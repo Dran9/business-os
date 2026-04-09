@@ -421,6 +421,16 @@ Cron           → followups, reminders, analysis batch
   - `server/middleware/tenant.js` ya no cachea los BLOBs de QR del tenant
   - `server/routes/workshops.js` conserva `price: 0` y `early_bird_price: 0` en creación
 
+## Estado funcional añadido en sesión 17
+- Corrección del módulo `Configuración`:
+  - `client/src/pages/Settings.jsx` ya no pisa cambios locales del formulario de cobros cuando termina una carga tardía o cuando se sube un QR
+  - al subir un QR solo se refresca `has_qr`, sin resetear etiquetas, montos ni cuentas destino que el usuario aún no guardó
+  - se agregó feedback visual de estado:
+    - `Cambios guardados`
+    - `Hay cambios sin guardar`
+    - confirmación explícita cuando el guardado fue exitoso
+- `client/src/index.css` suma estilos para avisos inline en Configuración
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

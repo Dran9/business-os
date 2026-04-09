@@ -33,17 +33,31 @@ router.post('/telegram', async (req, res) => {
     }
 
     // Procesar con el engine (tenant 1 = Daniel)
-    await processIncomingMessage({
-      tenantId: 1,
-      incoming: {
-        ...incoming,
-        channel: adapter.channelName,
-      },
-      channelAdapter: adapter,
-    });
+    try {
+      await processIncomingMessage({
+        tenantId: 1,
+        incoming: {
+          ...incoming,
+          channel: adapter.channelName,
+        },
+        channelAdapter: adapter,
+      });
+    } catch (err) {
+      console.error('[webhook/telegram] processIncomingMessage failed:', err.stack || err.message || err);
+      if (incoming.senderId) {
+        try {
+          await adapter.sendText(
+            incoming.senderId,
+            'Hubo un error procesando tu mensaje o comprobante. Intenta reenviarlo en unos segundos.'
+          );
+        } catch (sendErr) {
+          console.error('[webhook/telegram] fallback send failed:', sendErr.stack || sendErr.message || sendErr);
+        }
+      }
+    }
 
   } catch (err) {
-    console.error('[webhook/telegram] Error:', err);
+    console.error('[webhook/telegram] Error:', err.stack || err.message || err);
   }
 });
 

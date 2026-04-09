@@ -125,6 +125,30 @@ Se corrigió la UX del modo de prueba OCR porque el primer diseño era confuso y
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 26 (completada)
+
+### Resumen
+Se añadió un fallback defensivo en el webhook de Telegram para que el bot no vuelva a quedarse en silencio si falla el procesamiento interno de un comprobante o cualquier otro mensaje.
+
+### Lo implementado en esta sesión
+1. **Fallback de error visible**
+   - `server/routes/webhook.js`
+   - `processIncomingMessage()` ahora va dentro de un `try/catch` interno
+   - si algo falla:
+     - se loggea stack completo
+     - el bot intenta responder al usuario:
+       - `Hubo un error procesando tu mensaje o comprobante. Intenta reenviarlo en unos segundos.`
+
+2. **Motivo**
+   - antes el webhook respondía `200` a Telegram primero
+   - si luego el procesamiento interno fallaba, para el usuario quedaba como silencio total
+   - ahora ese caso queda visible operativamente
+
+### Verificación
+1. `node --check server/routes/webhook.js`: OK
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 20 (completada)
 
 ### Resumen

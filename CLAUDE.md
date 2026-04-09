@@ -257,6 +257,15 @@ Cron           → followups, reminders, analysis batch
   - actualiza solo `features_enabled.payment_proof_debug_mode`
   - evita mezclar este cambio con otros ajustes de cobro no guardados
 
+## Estado funcional añadido en sesión 25
+- `server/routes/webhook.js` ahora protege contra silencio total del bot
+- Si `processIncomingMessage()` falla al procesar una imagen, documento o comprobante:
+  - loggea el stack completo
+  - intenta responder al usuario:
+    - `Hubo un error procesando tu mensaje o comprobante. Intenta reenviarlo en unos segundos.`
+- Objetivo:
+  - que un error interno ya no se vea como “el bot no hizo nada”
+
 ## Estado funcional añadido en sesión 6
 - Nuevo servicio `server/services/adminEvents.js` para Server-Sent Events admin
 - `server/index.js` ahora expone `GET /api/admin/events`

@@ -745,3 +745,115 @@ Se volvió operativo el inbox y se introdujo una capa real de actualización en 
 - `node --check server/services/chatbot/paymentWorkflow.js`: OK
 - `node --check server/services/enrollments.js`: OK
 - `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 7 (completada)
+
+### Resumen
+Se completaron los puntos 3 y 5 del roadmap inmediato: ahora existe una revisión real de OCR/pagos dentro de Talleres, y Leads pasó de ser una tabla simple a una vista CRM con ficha y timeline. Con esto ya hay mejor capacidad de revisar mismatches, confirmar manualmente con monto corregido y entender el historial completo de un lead sin salir del módulo.
+
+### Lo implementado en esta sesión
+1. **Detalle de inscripción / OCR**
+   - `server/routes/enrollments.js` ahora soporta:
+     - `GET /api/enrollments/:id`
+     - `GET /api/enrollments/:id/proof`
+   - `server/services/enrollments.js` ahora añade:
+     - `getReviewState`
+     - `getEnrollmentProofAsset`
+   - El detalle de inscripción devuelve:
+     - datos del lead
+     - datos del taller
+     - contexto de pago
+     - `ocr_data`
+     - `payment_proof_present`
+     - `review_state`
+
+2. **Panel de revisión OCR en Talleres**
+   - `client/src/pages/Workshops.jsx` ahora tiene layout doble:
+     - tabla/lista de enrollments a la izquierda
+     - panel de revisión a la derecha
+   - El panel muestra:
+     - estado de revisión
+     - monto esperado
+     - monto detectado por OCR
+     - fecha del comprobante
+     - cuenta detectada
+     - banco
+     - referencia
+     - nombre detectado
+     - texto OCR crudo
+     - problemas detectados
+   - Si existe comprobante:
+     - se puede abrir
+     - se puede descargar
+     - si es imagen, se previsualiza
+
+3. **Confirmación manual con monto corregido**
+   - Desde el panel de revisión se puede confirmar un pago con monto manual
+   - Esto resuelve el caso donde el OCR falla o donde el monto esperado debe ajustarse operativamente sin tocar la base a mano
+
+4. **Ficha CRM del lead**
+   - `client/src/pages/Leads.jsx` dejó de ser solo tabla
+   - Ahora tiene layout doble:
+     - tabla rápida de leads
+     - ficha lateral del lead seleccionado
+   - La ficha muestra:
+     - datos base
+     - score
+     - fuente
+     - ciudad
+     - tags
+     - notas
+     - conversaciones recientes
+     - inscripciones
+     - ingresos asociados
+
+5. **Timeline del lead**
+   - `server/routes/leads.js` ahora compone un `timeline` unificado con:
+     - mensajes
+     - enrollments
+     - transacciones
+   - `client/src/pages/Leads.jsx` lo renderiza como timeline cronológico
+   - Esto permite ver el recorrido comercial real del lead en un solo lugar
+
+6. **Estilos CRM**
+   - `client/src/index.css` ahora soporta:
+     - `crm-layout`
+     - `crm-detail`
+     - `lead-summary-grid`
+     - `lead-meta-card`
+     - `timeline-list`
+     - `proof-preview`
+     - `table-row-selected`
+
+### Archivos creados/modificados en sesión 7
+- `server/routes/enrollments.js`
+- `server/services/enrollments.js`
+- `server/routes/leads.js`
+- `client/src/pages/Workshops.jsx`
+- `client/src/pages/Leads.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Notas importantes
+- La validación/operación de OCR ahora ya es mucho más revisable desde admin, pero todavía no existe una cola dedicada solo de mismatches. Por ahora vive dentro de Talleres.
+- El timeline de leads está pensado para contexto comercial y operativo; si luego quieres un CRM más profundo, el siguiente paso natural es permitir edición inline de notas/status del lead desde esta misma ficha.
+- `GET /api/enrollments/:id/proof` usa el mismo token auth por query string, igual que SSE.
+
+### Pendientes siguientes con más sentido
+- Crear una vista específica de mismatches o “bandeja de cobros por revisar”
+- Hacer `Marketing.jsx` funcional
+- Agregar acciones desde ficha del lead:
+  - abrir conversación
+  - cambiar estado
+  - editar notas
+- Conectar Agenda 4.0 para enriquecer la ficha del lead cuando también sea cliente de terapia
+
+### Verificación hecha
+- `node --check server/routes/enrollments.js`: OK
+- `node --check server/services/enrollments.js`: OK
+- `node --check server/routes/leads.js`: OK
+- `cd client && npm run build`: OK

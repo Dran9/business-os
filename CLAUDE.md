@@ -245,6 +245,33 @@ Cron           → followups, reminders, analysis batch
 - `server/services/chatbot/engine.js` ahora actualiza `last_message_at` también en outbound
 - Leads y Finanzas escuchan eventos en vivo y recargan sin refresh manual
 
+## Estado funcional añadido en sesión 7
+- `server/routes/enrollments.js` ahora soporta:
+  - `GET /api/enrollments/:id`
+  - `GET /api/enrollments/:id/proof`
+- `server/services/enrollments.js` ahora expone:
+  - `getEnrollmentProofAsset`
+  - `getReviewState`
+- La revisión de OCR/pagos en `client/src/pages/Workshops.jsx` ahora muestra:
+  - ficha detallada por inscripción
+  - monto esperado vs monto detectado
+  - fecha, cuenta, banco, referencia
+  - lista de reglas fallidas
+  - texto OCR crudo
+  - apertura/descarga del comprobante
+  - confirmación manual con monto corregido
+- `client/src/pages/Leads.jsx` ahora funciona como CRM con ficha lateral:
+  - datos del lead
+  - tags
+  - notas
+  - resumen de conversaciones
+  - resumen de inscripciones
+  - timeline consolidado de mensajes, enrollments y transacciones
+- `server/routes/leads.js` ahora devuelve en detalle:
+  - `enrollments`
+  - `transactions`
+  - `timeline`
+
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar
 - Acciones sobre talleres: broadcast, recordatorio, clonar

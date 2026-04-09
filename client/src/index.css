@@ -354,6 +354,10 @@ body {
   white-space: nowrap;
 }
 
+.table-row-selected {
+  background: var(--color-accent-light);
+}
+
 .table td {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border-light);
@@ -867,6 +871,93 @@ body {
   background: var(--color-surface);
 }
 
+.crm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.crm-detail {
+  min-width: 0;
+}
+
+.lead-summary-grid,
+.ocr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+
+.lead-meta-card {
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+  border: 1px solid var(--color-border);
+}
+
+.lead-mini-lists {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.mini-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border-light);
+  font-size: var(--font-size-sm);
+}
+
+.timeline-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: var(--space-3);
+}
+
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+
+.timeline-body {
+  border-left: 1px solid var(--color-border);
+  padding-left: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.timeline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.proof-preview {
+  display: block;
+  width: 100%;
+  max-height: 360px;
+  object-fit: contain;
+  margin-top: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+}
+
 @media (max-width: 768px) {
   .conversations-layout {
     grid-template-columns: 1fr;
@@ -888,6 +979,11 @@ body {
   .conversation-toolbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .crm-layout,
+  .lead-mini-lists {
+    grid-template-columns: 1fr;
   }
 }
 

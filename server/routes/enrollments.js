@@ -4,6 +4,8 @@ const { tenantMiddleware } = require('../middleware/tenant');
 const { query, queryPaginated } = require('../db');
 const {
   getEnrollmentWithRelations,
+  getEnrollmentProofAsset,
+  getReviewState,
   resendPaymentInstructions,
   resendPaymentQr,
   confirmEnrollmentPayment,
@@ -95,13 +97,44 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
       } catch {
         ocrData = null;
       }
-      return { ...item, ocr_data: ocrData };
+      return { ...item, ocr_data: ocrData, payment_proof_present: Boolean(item.payment_proof_type) };
     });
 
     res.json(result);
   } catch (err) {
     console.error('[enrollments GET]', err);
     res.status(500).json({ error: 'Error cargando inscripciones' });
+  }
+});
+
+router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const enrollment = await getEnrollmentWithRelations(req.tenantId, Number(req.params.id));
+    if (!enrollment) {
+      return res.status(404).json({ error: 'Inscripción no encontrada' });
+    }
+    res.json({
+      ...enrollment,
+      review_state: getReviewState(enrollment),
+    });
+  } catch (err) {
+    console.error('[enrollments GET/:id]', err);
+    res.status(500).json({ error: 'Error cargando inscripción' });
+  }
+});
+
+router.get('/:id/proof', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const asset = await getEnrollmentProofAsset(req.tenantId, Number(req.params.id));
+    if (!asset) {
+      return res.status(404).json({ error: 'Comprobante no encontrado' });
+    }
+    res.setHeader('Content-Type', asset.mime_type);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(asset.data);
+  } catch (err) {
+    console.error('[enrollments proof]', err);
+    res.status(500).json({ error: 'Error cargando comprobante' });
   }
 });
 

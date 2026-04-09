@@ -40,10 +40,36 @@ async function getEnrollmentWithRelations(tenantId, enrollmentId) {
   );
 
   if (!rows[0]) return null;
-  return {
+  const enrollment = {
     ...rows[0],
     ocr_data: parseJson(rows[0].ocr_data),
     conversation_metadata: parseJson(rows[0].conversation_metadata),
+  };
+  enrollment.review_state = getReviewState(enrollment);
+  enrollment.payment_proof_present = Boolean(rows[0].payment_proof_type);
+  return enrollment;
+}
+
+function getReviewState(enrollment) {
+  if (enrollment.payment_status === 'paid' || enrollment.status === 'confirmed') return 'confirmed';
+  const problems = enrollment.ocr_data?.validation_problems;
+  if (enrollment.payment_proof_type && Array.isArray(problems) && problems.length > 0) return 'mismatch';
+  if (enrollment.payment_proof_type) return 'proof_received';
+  return 'pending';
+}
+
+async function getEnrollmentProofAsset(tenantId, enrollmentId) {
+  const rows = await query(
+    `SELECT payment_proof, payment_proof_type
+     FROM enrollments
+     WHERE tenant_id = ? AND id = ?
+     LIMIT 1`,
+    [tenantId, enrollmentId]
+  );
+  if (!rows[0] || !rows[0].payment_proof) return null;
+  return {
+    data: rows[0].payment_proof,
+    mime_type: rows[0].payment_proof_type || 'application/octet-stream',
   };
 }
 
@@ -257,6 +283,8 @@ async function rejectEnrollmentPayment(tenantId, enrollmentId, reason = '') {
 
 module.exports = {
   getEnrollmentWithRelations,
+  getEnrollmentProofAsset,
+  getReviewState,
   syncWorkshopParticipantCount,
   resendPaymentInstructions,
   resendPaymentQr,

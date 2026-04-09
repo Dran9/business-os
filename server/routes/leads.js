@@ -83,7 +83,67 @@ router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
       [lead.id, req.tenantId]
     );
 
-    res.json({ ...lead, conversations, tags });
+    const enrollments = await query(
+      `SELECT e.id, e.status, e.payment_status, e.amount_due, e.amount_paid, e.enrolled_at, e.confirmed_at,
+              w.name AS workshop_name, w.date AS workshop_date
+       FROM enrollments e
+       JOIN workshops w ON w.id = e.workshop_id
+       WHERE e.lead_id = ? AND e.tenant_id = ?
+       ORDER BY COALESCE(e.confirmed_at, e.enrolled_at) DESC`,
+      [lead.id, req.tenantId]
+    );
+
+    const transactions = await query(
+      `SELECT id, type, category, amount, description, date, verified, verification_method
+       FROM transactions
+       WHERE lead_id = ? AND tenant_id = ?
+       ORDER BY date DESC, id DESC
+       LIMIT 50`,
+      [lead.id, req.tenantId]
+    );
+
+    const messageEvents = await query(
+      `SELECT m.id, 'message' AS event_type, m.direction, m.sender, m.content, m.content_type, m.created_at,
+              c.id AS conversation_id, w.name AS workshop_name
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       LEFT JOIN workshops w ON w.id = c.workshop_id
+       WHERE c.lead_id = ? AND c.tenant_id = ?
+       ORDER BY m.created_at DESC, m.id DESC
+       LIMIT 40`,
+      [lead.id, req.tenantId]
+    );
+
+    const enrollmentEvents = enrollments.map((enrollment) => ({
+      id: `enrollment-${enrollment.id}`,
+      event_type: 'enrollment',
+      created_at: enrollment.confirmed_at || enrollment.enrolled_at,
+      status: enrollment.status,
+      payment_status: enrollment.payment_status,
+      amount_due: enrollment.amount_due,
+      amount_paid: enrollment.amount_paid,
+      workshop_name: enrollment.workshop_name,
+      workshop_date: enrollment.workshop_date,
+    }));
+
+    const transactionEvents = transactions.map((transaction) => ({
+      id: `transaction-${transaction.id}`,
+      event_type: 'transaction',
+      created_at: transaction.date,
+      type: transaction.type,
+      category: transaction.category,
+      amount: transaction.amount,
+      description: transaction.description,
+      verified: transaction.verified,
+      verification_method: transaction.verification_method,
+    }));
+
+    const timeline = [...messageEvents, ...enrollmentEvents, ...transactionEvents]
+      .filter((item) => item.created_at)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 80);
+
+    res.json({ ...lead, conversations, tags, enrollments, transactions, timeline });
   } catch (err) {
     console.error('[leads GET/:id]', err);
     res.status(500).json({ error: 'Error' });

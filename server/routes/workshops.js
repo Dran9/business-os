@@ -59,7 +59,7 @@ router.post('/', authMiddleware, tenantMiddleware, async (req, res) => {
         venue_id, max_participants, price, early_bird_price, early_bird_deadline, description)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [req.tenantId, name, type || null, modality || 'presencial',
-       status || 'draft', date || null, time_start || null, time_end || null,
+       status || 'planned', date || null, time_start || null, time_end || null,
        venue_id || null, max_participants || 25, price || null,
        early_bird_price || null, early_bird_deadline || null, description || null]
     );

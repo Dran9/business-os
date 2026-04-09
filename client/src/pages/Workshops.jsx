@@ -432,7 +432,7 @@ function WorkshopForm({ workshop, onSave, onCancel }) {
     name: workshop?.name || '',
     type: workshop?.type || '',
     modality: workshop?.modality || 'presencial',
-    status: workshop?.status || 'draft',
+    status: workshop?.status || 'planned',
     date: workshop?.date ? workshop.date.split('T')[0] : '',
     time_start: workshop?.time_start || '',
     time_end: workshop?.time_end || '',
@@ -493,6 +493,9 @@ function WorkshopForm({ workshop, onSave, onCancel }) {
             <select className="input" name="status" value={form.status} onChange={handleChange}>
               {Object.entries(STATUS_LABELS).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
             </select>
+            <div className="text-xs text-muted" style={{ marginTop: 6 }}>
+              El chatbot solo ofrece talleres en estado Planificado o Inscripciones abiertas.
+            </div>
           </div>
           <div className="form-group">
             <label>Fecha</label>

@@ -282,4 +282,26 @@ router.post('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) 
   }
 });
 
+router.delete('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    await query('DELETE FROM messages WHERE conversation_id = ?', [conversation.id]);
+    await query(
+      "DELETE FROM tags WHERE tenant_id = ? AND target_type = 'conversation' AND target_id = ?",
+      [req.tenantId, conversation.id]
+    );
+    await query('DELETE FROM conversations WHERE id = ? AND tenant_id = ?', [conversation.id, req.tenantId]);
+
+    broadcast('conversation:change', { id: conversation.id, reason: 'deleted' }, req.tenantId);
+    res.json({ message: 'Conversación eliminada' });
+  } catch (err) {
+    console.error('[conversations DELETE]', err);
+    res.status(500).json({ error: 'Error eliminando conversación' });
+  }
+});
+
 module.exports = router;

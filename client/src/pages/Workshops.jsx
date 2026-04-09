@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut, getToken } from '../utils/api'
 import { formatCurrency, formatDate } from '../utils/dates'
+import ConfirmButton from '../components/ui/ConfirmButton'
 
 const STATUS_LABELS = {
   draft: 'Borrador',
@@ -111,7 +112,6 @@ export default function Workshops() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('¿Eliminar este taller?')) return
     await apiDelete(`/api/workshops/${id}`)
     loadWorkshops()
     loadEnrollments()
@@ -178,7 +178,7 @@ export default function Workshops() {
                   <td>
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleEdit(workshop)}>Editar</button>
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleDelete(workshop.id)}>Eliminar</button>
+                      <ConfirmButton label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDelete(workshop.id)} />
                     </div>
                   </td>
                 </tr>

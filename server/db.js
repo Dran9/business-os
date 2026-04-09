@@ -399,6 +399,32 @@ async function initializeDatabase() {
       )
     `);
 
+    // --- Contacts ---
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS contacts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        phone VARCHAR(30) NOT NULL,
+        wa_name VARCHAR(200) DEFAULT NULL,
+        clean_name VARCHAR(200) DEFAULT NULL,
+        name_quality ENUM('nombre_completo','nombre_parcial','sin_nombre') DEFAULT 'sin_nombre',
+        label ENUM('cliente','cliente_agenda','nurture','cold','lista_negra') DEFAULT 'cold',
+        city VARCHAR(100) DEFAULT NULL,
+        first_contact_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_contact_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        needs_review BOOLEAN DEFAULT FALSE,
+        review_reason VARCHAR(100) DEFAULT NULL,
+        notes TEXT DEFAULT NULL,
+        deleted_at DATETIME DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_phone_tenant (tenant_id, phone),
+        KEY idx_label (tenant_id, label),
+        KEY idx_deleted (deleted_at),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // --- Playbooks (embudos conversacionales) ---
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS playbooks (
@@ -748,6 +774,9 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS position INT DEFAULT 0').catch(() => {});
     await conn.execute('ALTER TABLE flow_sessions ADD COLUMN IF NOT EXISTS status ENUM("active", "completed", "escalated", "abandoned") DEFAULT "active"').catch(() => {});
+    await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_id INT DEFAULT NULL').catch(() => {});
+    await conn.execute('ALTER TABLE leads ADD INDEX IF NOT EXISTS idx_contact_id (contact_id)').catch(() => {});
+    await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at DATETIME DEFAULT NULL').catch(() => {});
     await conn.execute(
       "UPDATE admin_users SET display_name = 'Daniel' WHERE username = 'owner' AND (display_name IS NULL OR display_name = '')"
     ).catch(() => {});

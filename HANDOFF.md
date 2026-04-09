@@ -5,6 +5,72 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 19 (completada)
+
+### Resumen
+Se añadió `Contacts` como capa intermedia entre teléfono y lead, y el `flowEngine` ahora reconoce al contacto antes de iniciar el embudo. También se normalizaron deletes operativos y las acciones destructivas del admin pasaron a un patrón de confirmación de doble click.
+
+### Lo implementado en esta sesión
+1. **Schema**
+   - `server/db.js`
+   - nueva tabla `contacts`
+   - `leads` ahora recibe:
+     - `contact_id`
+     - `deleted_at`
+
+2. **Reconocimiento**
+   - nuevo `server/services/nameClassifier.js`
+   - `server/services/agendaBridge.js` suma `findByPhone(phone)`
+   - `server/services/chatbot/flowEngine.js` ahora:
+     - crea o recupera `contacts`
+     - vincula `lead.contact_id`
+     - bloquea `lista_negra`
+     - arranca desde `nodo_06_presentacion` para `cliente` / `cliente_agenda`
+     - agrega `greeting_override` y `groq_context` al contexto de sesión
+
+3. **Contacts admin**
+   - nueva ruta `server/routes/contacts.js`
+   - nuevo mount `/api/contacts` en `server/index.js`
+   - nueva página `client/src/pages/Contacts.jsx`
+   - nuevo ítem `Contacts` en sidebar
+
+4. **Deletes**
+   - `server/routes/leads.js` ahora hace soft-delete y marca sesiones como `abandoned`
+   - `server/routes/conversations.js` ahora soporta delete explícito de conversación
+
+5. **Confirmación de acciones destructivas**
+   - nuevo `client/src/components/ui/ConfirmButton.jsx`
+   - aplicado en:
+     - `client/src/pages/Workshops.jsx`
+     - `client/src/pages/Leads.jsx`
+     - `client/src/pages/Finance.jsx`
+     - `client/src/pages/Marketing.jsx`
+     - `client/src/pages/Funnel.jsx`
+     - `client/src/pages/Settings.jsx`
+     - `client/src/pages/Contacts.jsx`
+
+### Verificación
+1. **Sintaxis server**
+   - `node --check` OK en:
+     - `server/db.js`
+     - `server/index.js`
+     - `server/routes/contacts.js`
+     - `server/routes/leads.js`
+     - `server/routes/conversations.js`
+     - `server/services/agendaBridge.js`
+     - `server/services/chatbot/flowEngine.js`
+     - `server/services/nameClassifier.js`
+
+2. **Startup local**
+   - `node server/index.js` falla en este workspace por entorno local sin MySQL escuchando en `127.0.0.1:3306`
+   - por eso no se pudo completar validación real de:
+     - creación física de `contacts`
+     - `GET /api/contacts`
+     - `POST /api/contacts`
+     - respuesta end-to-end del bot
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 18 (completada)
 
 ### Resumen

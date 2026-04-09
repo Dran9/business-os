@@ -10,7 +10,7 @@ const router = express.Router();
 router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
     const { status, source, search, view, page = 1, limit = 50 } = req.query;
-    let sql = 'SELECT * FROM leads WHERE tenant_id = ?';
+    let sql = 'SELECT * FROM leads WHERE tenant_id = ? AND deleted_at IS NULL';
     const params = [req.tenantId];
 
     if (status) {
@@ -51,13 +51,13 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
 // GET /api/leads/stats/summary — estadísticas rápidas
 router.get('/stats/summary', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    const [total] = await query('SELECT COUNT(*) as c FROM leads WHERE tenant_id = ?', [req.tenantId]);
+    const [total] = await query('SELECT COUNT(*) as c FROM leads WHERE tenant_id = ? AND deleted_at IS NULL', [req.tenantId]);
     const statuses = await query(
-      'SELECT status, COUNT(*) as c FROM leads WHERE tenant_id = ? GROUP BY status',
+      'SELECT status, COUNT(*) as c FROM leads WHERE tenant_id = ? AND deleted_at IS NULL GROUP BY status',
       [req.tenantId]
     );
     const sources = await query(
-      'SELECT source, COUNT(*) as c FROM leads WHERE tenant_id = ? AND source IS NOT NULL GROUP BY source',
+      'SELECT source, COUNT(*) as c FROM leads WHERE tenant_id = ? AND deleted_at IS NULL AND source IS NOT NULL GROUP BY source',
       [req.tenantId]
     );
 
@@ -75,7 +75,7 @@ router.get('/stats/summary', authMiddleware, tenantMiddleware, async (req, res) 
 // GET /api/leads/:id — detalle de un lead con conversaciones
 router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM leads WHERE id = ? AND tenant_id = ?', [req.params.id, req.tenantId]);
+    const rows = await query('SELECT * FROM leads WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL', [req.params.id, req.tenantId]);
     if (rows.length === 0) return res.status(404).json({ error: 'Lead no encontrado' });
 
     const lead = rows[0];
@@ -179,7 +179,7 @@ router.put('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
     if (updates.length === 0) return res.status(400).json({ error: 'Nada que actualizar' });
 
     params.push(req.params.id, req.tenantId);
-    await query(`UPDATE leads SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, params);
+    await query(`UPDATE leads SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`, params);
     broadcast('lead:change', { id: Number(req.params.id), reason: 'updated' }, req.tenantId);
     res.json({ message: 'Lead actualizado' });
   } catch (err) {
@@ -263,7 +263,7 @@ router.put('/:id/agenda-link', authMiddleware, tenantMiddleware, async (req, res
       : Number(req.body.agenda_client_id);
 
     await query(
-      'UPDATE leads SET agenda_client_id = ? WHERE id = ? AND tenant_id = ?',
+      'UPDATE leads SET agenda_client_id = ? WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL',
       [agendaClientId, Number(req.params.id), req.tenantId]
     );
 
@@ -278,7 +278,14 @@ router.put('/:id/agenda-link', authMiddleware, tenantMiddleware, async (req, res
 // DELETE /api/leads/:id
 router.delete('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    await query('DELETE FROM leads WHERE id = ? AND tenant_id = ?', [req.params.id, req.tenantId]);
+    await query(
+      'UPDATE leads SET deleted_at = NOW() WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL',
+      [req.params.id, req.tenantId]
+    );
+    await query(
+      "UPDATE flow_sessions SET status = 'abandoned' WHERE lead_id = ? AND tenant_id = ?",
+      [req.params.id, req.tenantId]
+    );
     broadcast('lead:change', { id: Number(req.params.id), reason: 'deleted' }, req.tenantId);
     res.json({ message: 'Lead eliminado' });
   } catch (err) {

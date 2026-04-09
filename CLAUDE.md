@@ -437,6 +437,28 @@ Cron           → followups, reminders, analysis batch
   - `server/services/channels/telegram.js` volvió a registrar el webhook sin `secret_token`
   - motivo: Telegram se usa solo como canal de prueba y la validación estaba dejando el bot mudo si el webhook no se había reconfigurado
 
+## Estado funcional añadido en sesión 19
+- Nuevo módulo `Contacts`:
+  - tabla `contacts` en `server/db.js`
+  - `leads` ahora soporta `contact_id` y `deleted_at`
+  - nueva ruta `server/routes/contacts.js`
+  - nueva página `client/src/pages/Contacts.jsx`
+- Nuevo helper `server/services/nameClassifier.js`:
+  - clasifica `wa_name` en `nombre_completo`, `nombre_parcial` o `sin_nombre`
+- `server/services/agendaBridge.js` ahora expone `findByPhone(phone)` para reconocimiento liviano contra Agenda 4.0
+- `server/services/chatbot/flowEngine.js` ahora:
+  - busca o crea `contact` por teléfono al entrar un mensaje
+  - vincula el `lead.contact_id` si faltaba
+  - decide el nodo de entrada según `contact.label`
+  - puede saltar directo a `nodo_06_presentacion` para `cliente` / `cliente_agenda`
+  - usa `greeting_override` en el primer mensaje de la sesión
+  - agrega `groq_context` al system prompt de nodos `open_question_ai`
+- Deletes y UI destructiva:
+  - `server/routes/leads.js` ahora hace soft-delete y abandona `flow_sessions`
+  - `server/routes/conversations.js` ahora soporta hard delete de conversación + mensajes + tags de conversación
+  - nuevo `client/src/components/ui/ConfirmButton.jsx`
+  - acciones destructivas existentes migradas a confirmación de doble click
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

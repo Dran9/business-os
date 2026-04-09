@@ -2,6 +2,7 @@ import { startTransition, useCallback, useEffect, useMemo, useState } from 'reac
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency } from '../utils/dates'
+import ConfirmButton from '../components/ui/ConfirmButton'
 
 const CATEGORIES = ['taller', 'publicidad', 'venue', 'materiales', 'herramientas', 'transporte', 'otros']
 
@@ -187,18 +188,15 @@ export default function Finance() {
                   <td>
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(row)}>Editar</button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={async () => {
-                          if (!confirm('¿Eliminar esta transacción?')) return
+                      <ConfirmButton
+                        label="Eliminar"
+                        confirmLabel="¿Eliminar?"
+                        onConfirm={async () => {
                           await apiDelete(`/api/finance/transactions/${row.id}`)
                           if (editing?.id === row.id) setEditing(null)
                           loadData()
                         }}
-                      >
-                        Eliminar
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>

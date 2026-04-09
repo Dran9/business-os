@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut, apiUpload, setStoredUser } from '../utils/api'
+import ConfirmButton from '../components/ui/ConfirmButton'
 
 const ROLE_LABELS = {
   owner: 'Owner',
@@ -497,11 +498,10 @@ export default function Settings({ currentUser }) {
                               </button>
                             )}
                             {member.id !== currentUser?.id && (
-                              <button
-                                type="button"
-                                className="btn btn-ghost btn-sm"
-                                onClick={async () => {
-                                  if (!confirm(`¿Eliminar a ${member.username}?`)) return
+                              <ConfirmButton
+                                label="Eliminar"
+                                confirmLabel="¿Eliminar?"
+                                onConfirm={async () => {
                                   try {
                                     await apiDelete(`/api/team/${member.id}`)
                                     setNotice({ type: 'success', text: 'Usuario eliminado correctamente.' })
@@ -510,9 +510,7 @@ export default function Settings({ currentUser }) {
                                     alert(err.message)
                                   }
                                 }}
-                              >
-                                Eliminar
-                              </button>
+                              />
                             )}
                           </div>
                         </td>

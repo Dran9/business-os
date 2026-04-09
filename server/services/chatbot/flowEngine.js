@@ -6,6 +6,8 @@ const { recalculateLeadScore } = require('../analysis/scorer');
 const { buildPaymentQrResponse, maybeProcessPaymentProof } = require('./paymentWorkflow');
 const { getActivePaymentOptions } = require('../paymentOptions');
 const { sendPushinatorNotification } = require('../pushinator');
+const { classifyName } = require('../nameClassifier');
+const { findByPhone } = require('../agendaBridge');
 
 const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options']);
 const TELEGRAM_BUTTON_PREFIX = 'option:';
@@ -166,16 +168,19 @@ async function getActiveFlowSession(tenantId, conversationId) {
   return rows[0] || null;
 }
 
-async function createFlowSession({ tenantId, conversationId, leadId, startNode }) {
-  const context = {
-    history: [buildHistoryEntry(startNode)],
-    pending_input_for: null,
+async function createFlowSession({ tenantId, conversationId, leadId, startNode, context = {} }) {
+  const nextContext = {
+    ...context,
+    history: Array.isArray(context.history) && context.history.length > 0
+      ? context.history
+      : [buildHistoryEntry(startNode)],
+    pending_input_for: context.pending_input_for || null,
   };
 
   const result = await query(
     `INSERT INTO flow_sessions (tenant_id, conversation_id, lead_id, current_node_key, context, status)
      VALUES (?, ?, ?, ?, ?, 'active')`,
-    [tenantId, conversationId, leadId || null, startNode.node_key, toJson(context)]
+    [tenantId, conversationId, leadId || null, startNode.node_key, toJson(nextContext)]
   );
 
   await query(
@@ -398,6 +403,19 @@ async function createOrUpdateLeadForInbound({ tenantId, channel, senderId, sende
   );
 
   if (existing[0]) {
+    if (existing[0].deleted_at) {
+      await query(
+        `UPDATE leads
+         SET deleted_at = NULL,
+             name = COALESCE(?, name),
+             source = COALESCE(?, source),
+             last_contact_at = NOW()
+         WHERE id = ? AND tenant_id = ?`,
+        [senderName || null, channel || null, existing[0].id, tenantId]
+      );
+      const restored = await query('SELECT * FROM leads WHERE id = ? LIMIT 1', [existing[0].id]);
+      return restored[0] || null;
+    }
     return existing[0];
   }
 
@@ -415,6 +433,88 @@ async function createOrUpdateLeadForInbound({ tenantId, channel, senderId, sende
   broadcast('lead:change', { id: result.insertId, reason: 'created' }, tenantId);
   const rows = await query('SELECT * FROM leads WHERE id = ? LIMIT 1', [result.insertId]);
   return rows[0] || null;
+}
+
+async function lookupOrCreateContact({ tenantId, phone, waName }) {
+  if (!phone) return null;
+
+  const existing = await query(
+    'SELECT * FROM contacts WHERE tenant_id = ? AND phone = ? AND deleted_at IS NULL LIMIT 1',
+    [tenantId, phone]
+  );
+
+  if (existing[0]) {
+    await query(
+      'UPDATE contacts SET last_contact_at = NOW(), wa_name = COALESCE(?, wa_name) WHERE id = ?',
+      [waName || null, existing[0].id]
+    );
+    return {
+      ...existing[0],
+      wa_name: waName || existing[0].wa_name,
+      _existing: true,
+      _previous_last_contact_at: existing[0].last_contact_at,
+    };
+  }
+
+  const deleted = await query(
+    'SELECT * FROM contacts WHERE tenant_id = ? AND phone = ? LIMIT 1',
+    [tenantId, phone]
+  );
+
+  const { quality, cleanName } = classifyName(waName);
+
+  let label = 'cold';
+  let city = null;
+  try {
+    const agendaClient = await findByPhone(phone);
+    if (agendaClient) {
+      label = 'cliente_agenda';
+      city = agendaClient.city || null;
+    }
+  } catch (err) {
+    console.error('[lookupOrCreateContact] agenda lookup failed:', err.message);
+  }
+
+  if (deleted[0]) {
+    await query(
+      `UPDATE contacts
+       SET wa_name = ?, clean_name = ?, name_quality = ?, label = ?, city = ?,
+           deleted_at = NULL, first_contact_at = COALESCE(first_contact_at, NOW()),
+           last_contact_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [waName || null, cleanName, quality, label, city, deleted[0].id]
+    );
+    return {
+      ...deleted[0],
+      wa_name: waName || null,
+      clean_name: cleanName,
+      name_quality: quality,
+      label,
+      city,
+      deleted_at: null,
+      _existing: false,
+      _previous_last_contact_at: null,
+    };
+  }
+
+  const result = await query(
+    `INSERT INTO contacts (tenant_id, phone, wa_name, clean_name, name_quality, label, city, first_contact_at, last_contact_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    [tenantId, phone, waName || null, cleanName, quality, label, city]
+  );
+
+  return {
+    id: result.insertId,
+    tenant_id: tenantId,
+    phone,
+    wa_name: waName,
+    clean_name: cleanName,
+    name_quality: quality,
+    label,
+    city,
+    _existing: false,
+    _previous_last_contact_at: null,
+  };
 }
 
 async function ensureConversationForLead({ tenantId, leadId, channel }) {
@@ -687,8 +787,63 @@ async function runFlowEngine({
   const lead = await getLeadById(tenant_id, lead_id || conversation.lead_id);
   let session = await getActiveFlowSession(tenant_id, conversation_id);
 
+  const phone = lead?.phone || incoming?.from || incoming?.senderId || null;
+  const waName = lead?.name || incoming?.senderName || null;
+  const contact = await lookupOrCreateContact({ tenantId: tenant_id, phone, waName });
+
+  if (contact && lead && !lead.contact_id) {
+    await query('UPDATE leads SET contact_id = ? WHERE id = ?', [contact.id, lead.id]);
+    lead.contact_id = contact.id;
+  }
+
   if (!session) {
-    const startNode = await getStartNode(tenant_id);
+    let startNode;
+    let initialContext = {};
+
+    if (contact?.label === 'lista_negra') {
+      return {
+        response_text: 'Hola, en este momento no tenemos disponibilidad.',
+        buttons: [],
+        action_taken: 'blocked_contact',
+        responses: [{ type: 'text', text: 'Hola, en este momento no tenemos disponibilidad.' }],
+      };
+    }
+
+    if (contact?.label === 'cliente_agenda' || contact?.label === 'cliente') {
+      startNode = await getFlowNodeByKey(tenant_id, 'nodo_06_presentacion');
+      const displayName = contact.clean_name || contact.wa_name || 'amigo/a';
+      initialContext = {
+        skipped_screening: true,
+        contact_label: contact.label,
+        contact_name: displayName,
+        greeting_override: `¡Hola ${displayName}! Qué gusto verte por aquí.`,
+      };
+    }
+
+    if (!startNode && contact?.label === 'nurture') {
+      startNode = await getStartNode(tenant_id);
+      initialContext = {
+        contact_label: 'nurture',
+        groq_context: 'Este contacto ya mostró interés anteriormente. Ser cálido y directo.',
+      };
+    }
+
+    if (!startNode && contact?.label === 'cold' && contact?._existing && contact?._previous_last_contact_at) {
+      const daysSinceLast = (Date.now() - new Date(contact._previous_last_contact_at).getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceLast < 180) {
+        startNode = await getStartNode(tenant_id);
+        initialContext = {
+          contact_label: 'cold_returning',
+          groq_context: 'Este contacto ya preguntó antes sin comprar. Ser más directo, menos calentamiento.',
+        };
+      }
+    }
+
+    if (!startNode) {
+      startNode = await getStartNode(tenant_id);
+      initialContext = { contact_label: contact?.label || 'new' };
+    }
+
     if (!startNode) {
       throw new Error('No existe nodo inicial activo para el tenant');
     }
@@ -697,6 +852,7 @@ async function runFlowEngine({
       conversationId: conversation_id,
       leadId: lead?.id || null,
       startNode,
+      context: initialContext,
     });
     await emitSessionUpdate(tenant_id, session.id);
   }
@@ -740,7 +896,11 @@ async function runFlowEngine({
 
     if (currentNode.type === 'message') {
       const workshop = await getLatestWorkshop(tenant_id);
-      const renderedText = formatMessageWithWorkshop(currentNode.message_text, workshop);
+      let renderedText = resolveMessageText(currentNode.message_text, context, workshop);
+      if (context.greeting_override && safetyCounter === 1) {
+        renderedText = `${context.greeting_override}\n\n${renderedText}`;
+        delete context.greeting_override;
+      }
       responses.push({
         type: 'text',
         text: renderedText,
@@ -880,7 +1040,7 @@ async function runFlowEngine({
       }
 
       const aiReply = await runGroqChat({
-        systemPrompt: currentNode.ai_system_prompt || 'Responde con empatía y brevedad en español.',
+        systemPrompt: buildAiSystemPrompt(currentNode, context),
         userPrompt: normalizeText(message_text),
         temperature: 0.4,
         maxTokens: 180,
@@ -1066,6 +1226,18 @@ function formatMessageWithWorkshop(messageText, workshop) {
     .replaceAll('[VENUE]', workshop?.venue_name || 'venue por confirmar')
     .replaceAll('[HORA_INICIO]', workshop ? formatBoliviaTime(workshop.time_start) : 'hora por confirmar')
     .replaceAll('[HORA_FIN]', workshop ? formatBoliviaTime(workshop.time_end) : 'hora por confirmar');
+}
+
+function resolveMessageText(messageText, context, workshop) {
+  return formatMessageWithWorkshop(messageText, workshop, context);
+}
+
+function buildAiSystemPrompt(node, context) {
+  let systemPrompt = node.ai_system_prompt || 'Responde con empatía y brevedad en español.';
+  if (context.groq_context) {
+    systemPrompt += `\n\nContexto adicional sobre este contacto: ${context.groq_context}`;
+  }
+  return systemPrompt;
 }
 
 async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {

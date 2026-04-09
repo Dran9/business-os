@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatDate, timeAgo } from '../utils/dates'
+import ConfirmButton from '../components/ui/ConfirmButton'
 
 const TYPE_LABELS = {
   message: 'Mensaje',
@@ -291,7 +292,6 @@ export default function Funnel() {
   }
 
   async function handleDeleteNode(node) {
-    if (!confirm(`¿Eliminar ${node.node_key}?`)) return
     try {
       await apiDelete(`/api/funnel/nodes/${node.id}`)
       await loadNodes()
@@ -389,9 +389,7 @@ export default function Funnel() {
                   <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleEditNode(node)}>
                     Editar
                   </button>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleDeleteNode(node)}>
-                    Eliminar
-                  </button>
+                  <ConfirmButton label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDeleteNode(node)} />
                 </div>
               </div>
             ))}

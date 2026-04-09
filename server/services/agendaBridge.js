@@ -106,6 +106,30 @@ async function searchAgendaClients(queryText, limit = 12) {
   );
 }
 
+async function findByPhone(phone) {
+  const config = resolveAgendaConfig();
+  if (!config) return null;
+
+  const digits = normalizeDigits(phone);
+  if (digits.length < 8) return null;
+
+  try {
+    const rows = await agendaQuery(
+      `SELECT id, phone, first_name, last_name, city
+       FROM clients
+       WHERE tenant_id = ? AND deleted_at IS NULL
+         AND REPLACE(REPLACE(REPLACE(REPLACE(phone, '+', ''), ' ', ''), '-', ''), '(', '') LIKE ?
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [config.tenantId, `%${digits}%`]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.error('[agendaBridge findByPhone]', err.message);
+    return null;
+  }
+}
+
 async function getAgendaClientBundle({ agendaClientId = null, phone = '', name = '' } = {}) {
   const config = resolveAgendaConfig();
   if (!config) return { configured: false, source: null, client: null, appointments: [], payments: [], matches: [] };
@@ -181,5 +205,6 @@ async function getAgendaClientBundle({ agendaClientId = null, phone = '', name =
 module.exports = {
   resolveAgendaConfig,
   searchAgendaClients,
+  findByPhone,
   getAgendaClientBundle,
 };

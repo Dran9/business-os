@@ -2,6 +2,7 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency, formatDate, timeAgo } from '../utils/dates'
+import ConfirmButton from '../components/ui/ConfirmButton'
 
 const STATUS_LABELS = {
   new: 'Nuevo',
@@ -225,6 +226,20 @@ export default function Leads() {
     }
   }
 
+  async function handleDeleteLead() {
+    if (!selectedId) return
+    try {
+      await apiDelete(`/api/leads/${selectedId}`)
+      setSelectedLead(null)
+      setSelectedId(null)
+      setAgendaBundle(null)
+      setAgendaMatches([])
+      await load()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
@@ -316,9 +331,16 @@ export default function Leads() {
                         {selectedLead.phone} · {selectedLead.city || 'Sin ciudad'} · {selectedLead.source || 'Sin fuente'}
                       </div>
                     </div>
-                    <span className={STATUS_CLASSES[selectedLead.status] || 'badge'}>
-                      {STATUS_LABELS[selectedLead.status] || selectedLead.status}
-                    </span>
+                    <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <span className={STATUS_CLASSES[selectedLead.status] || 'badge'}>
+                        {STATUS_LABELS[selectedLead.status] || selectedLead.status}
+                      </span>
+                      <ConfirmButton
+                        label="Eliminar lead"
+                        confirmLabel="¿Eliminar lead?"
+                        onConfirm={handleDeleteLead}
+                      />
+                    </div>
                   </div>
                   <div className="lead-summary-grid">
                     <LeadMeta label="Score" value={String(selectedLead.quality_score || 0)} />

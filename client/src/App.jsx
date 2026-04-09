@@ -7,6 +7,7 @@ import Login from './pages/Login'
 
 // Lazy load pages — cada módulo se carga solo cuando se navega a él
 const Dashboard     = lazy(() => import('./pages/Dashboard'))
+const Contacts      = lazy(() => import('./pages/Contacts'))
 const Conversations = lazy(() => import('./pages/Conversations'))
 const Funnel        = lazy(() => import('./pages/Funnel'))
 const Leads         = lazy(() => import('./pages/Leads'))
@@ -38,6 +39,7 @@ export default function App() {
         <Routes>
           <Route element={<AdminLayout onLogout={logout} theme={theme} onToggleTheme={toggleTheme} currentUser={user} />}>
             <Route index element={<Dashboard />} />
+            <Route path="contacts" element={<Contacts />} />
             <Route path="conversations" element={<Conversations />} />
             <Route path="funnel" element={<Funnel />} />
             <Route path="leads" element={<Leads />} />

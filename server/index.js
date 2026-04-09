@@ -31,6 +31,7 @@ app.get('/api/admin/events', authMiddleware, sseHandler);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/webhook', require('./routes/webhook'));
+app.use('/api/contacts', authMiddleware, require('./middleware/tenant').tenantMiddleware, require('./routes/contacts'));
 app.use('/api/leads', require('./routes/leads'));
 app.use('/api/workshops', require('./routes/workshops'));
 app.use('/api/enrollments', require('./routes/enrollments'));

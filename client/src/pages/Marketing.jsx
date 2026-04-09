@@ -2,6 +2,7 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency } from '../utils/dates'
+import ConfirmButton from '../components/ui/ConfirmButton'
 
 const STATUS_OPTIONS = ['draft', 'active', 'paused', 'completed']
 const PLATFORM_OPTIONS = ['meta', 'instagram', 'facebook', 'tiktok', 'google', 'whatsapp', 'referidos', 'otros']
@@ -210,18 +211,15 @@ export default function Marketing() {
                   <td>
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(campaign)}>Editar</button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={async () => {
-                          if (!confirm('¿Eliminar esta campaña?')) return
+                      <ConfirmButton
+                        label="Eliminar"
+                        confirmLabel="¿Eliminar?"
+                        onConfirm={async () => {
                           await apiDelete(`/api/marketing/${campaign.id}`)
                           if (editing?.id === campaign.id) setEditing(null)
                           loadData()
                         }}
-                      >
-                        Eliminar
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>

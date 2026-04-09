@@ -103,9 +103,10 @@ Cron           → followups, reminders, analysis batch
 ## Módulos del sistema
 
 ### 1. Chatbot / Embudo / Venta
-- Motor de conversación híbrido: determinístico + LLM
-- Playbooks configurables por taller (JSON en DB)
-- Fases: qualify → educate (LLM) → close → confirm (OCR)
+- Motor de conversación híbrido: embudo determinístico por nodos + pasos con LLM
+- `flow_nodes` y `flow_sessions` gobiernan el embudo actual
+- El webhook de Telegram ya entra por `flowEngine`, no por fases hardcodeadas
+- Fases conceptuales: qualify → educate (LLM) → close → confirm (OCR)
 - Escalación a Daniel vía Pushinator
 - Groq actual: `llama-3.3-70b-versatile` con fallback determinístico si falta `GROQ_API_KEY`
 
@@ -352,6 +353,61 @@ Cron           → followups, reminders, analysis batch
 - objetivo de sesión 11:
   - corregir lista de conversaciones “trancada”
   - asegurar que las más nuevas queden arriba y las más antiguas abajo
+
+## Estado funcional añadido en sesión 12
+- hallazgo de producción:
+  - el taller `Constel Work` existía pero estaba en estado `draft`
+  - el chatbot solo ofrece talleres `planned` u `open`
+- `client/src/pages/Workshops.jsx` ahora crea talleres nuevos con estado por defecto `planned`
+- la UI de talleres ahora explica explícitamente:
+  - el chatbot solo muestra talleres en estado Planificado o Inscripciones abiertas
+- `server/routes/workshops.js` también cambia el default backend de creación a `planned`
+
+## Estado funcional añadido en sesión 13
+- Nuevo módulo admin `Embudo`:
+  - `client/src/pages/Funnel.jsx`
+  - ruta `/funnel`
+  - ítem en sidebar entre Conversaciones y Leads
+- Nuevo schema conversacional:
+  - tabla `flow_nodes`
+  - tabla `flow_sessions`
+  - seed inicial automático del flujo base para `tenant_id = 1` si `flow_nodes` está vacía
+- Nuevo backend admin:
+  - `server/routes/funnel.js`
+  - `GET /api/funnel/nodes`
+  - `POST /api/funnel/nodes`
+  - `PUT /api/funnel/nodes/:id`
+  - `DELETE /api/funnel/nodes/:id`
+  - `GET /api/funnel/sessions`
+  - `GET /api/funnel/sessions/:id`
+- Nuevo motor `server/services/chatbot/flowEngine.js`:
+  - reemplaza el webhook hardcodeado actual de Telegram
+  - inicia sesión en el nodo de menor `position`
+  - soporta `message`, `open_question_ai`, `open_question_detect`, `options`, `action`
+  - guarda contexto en `flow_sessions.context`
+  - reemplaza placeholders `[FECHA]`, `[VENUE]`, `[HORA_INICIO]`, `[HORA_FIN]` con el taller más próximo `planned/open`
+  - crea lead automáticamente al responder `nodo_02` y lo pasa a `qualifying`
+  - emite SSE `funnel_session_update` en cada cambio de nodo
+  - si un `node_key` referenciado no existe, loggea y escala automáticamente
+- Integraciones del embudo:
+  - `send_qr` reutiliza `payment_options` del tenant y `paymentWorkflow`
+  - `process_payment_proof` reutiliza OCR + confirmación de pagos existente
+  - `check_workshop_capacity` valida cupos para constelar
+  - `escalate` marca conversación como `escalated`, sesión como `escalated` y dispara Pushinator si hay config
+- Nuevo servicio `server/services/pushinator.js`
+  - usa `PUSHINATOR_API_TOKEN` / `PUSHINATOR_CHANNEL_ID` o `tenant.push_config`
+  - si faltan credenciales, falla de forma tolerante sin romper el bot
+- `client/src/pages/Conversations.jsx` ahora acepta `?conversationId=` para deep-link desde Embudo
+
+## Estado funcional añadido en sesión 14
+- Ajuste operativo en talleres:
+  - `server/routes/workshops.js` crea talleres nuevos con default `planned` en vez de `draft`
+  - `client/src/pages/Workshops.jsx` refleja ese default y muestra una nota aclarando que el bot/embudo solo ofrece talleres `planned` u `open`
+
+## Regla operativa de deploy
+- Este proyecto despliega desde `main` para Hostinger
+- No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario
+- Cuando se haga un cambio funcional, actualizar también `CLAUDE.md` y `HANDOFF.md` en la misma sesión
 
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar

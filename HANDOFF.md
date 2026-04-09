@@ -5,6 +5,132 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 13/14 (completadas)
+
+### Resumen
+Se implementó el módulo completo **Embudo** con backend, frontend, schema nuevo y reemplazo del motor hardcodeado del bot de Telegram por un `flowEngine` dinámico basado en nodos. Además, los talleres nuevos ahora nacen en `planned` para que el bot/embudo pueda ofrecerlos sin un paso manual extra.
+
+### Lo implementado en estas sesiones
+1. **Nuevo embudo dinámico en DB**
+   - `server/db.js` ahora crea:
+     - `flow_nodes`
+     - `flow_sessions`
+   - `flow_sessions` tiene índices para:
+     - `conversation_id`
+     - `status`
+   - Se agrega seed automático del flujo inicial completo para `tenant_id = 1` si `flow_nodes` está vacía
+
+2. **Nuevo motor del bot**
+   - Nuevo archivo: `server/services/chatbot/flowEngine.js`
+   - El webhook de Telegram ya no entra al viejo `chatbot/engine.js`
+   - Ahora el bot:
+     - busca o crea lead
+     - busca o crea conversación
+     - busca o crea `flow_session`
+     - avanza dinámicamente por `flow_nodes`
+   - Soporta tipos:
+     - `message`
+     - `open_question_ai`
+     - `open_question_detect`
+     - `options`
+     - `action`
+   - Guarda contexto acumulado en `flow_sessions.context`
+   - Si falta un `node_key` referenciado, escala automáticamente a Daniel
+
+3. **Acciones del embudo ya conectadas**
+   - `send_qr`
+     - reutiliza `payment_options` del tenant
+     - reutiliza `buildPaymentQrResponse()`
+   - `process_payment_proof`
+     - reutiliza OCR y validación de comprobantes ya existente
+   - `check_workshop_capacity`
+     - verifica cupos para constelar y redirige a `nodo_09_sin_cupos` si corresponde
+   - `escalate`
+     - marca la sesión como `escalated`
+     - marca la conversación como `escalated`
+     - intenta notificar por Pushinator
+
+4. **Nuevo backend admin del embudo**
+   - Nuevo archivo: `server/routes/funnel.js`
+   - Endpoints:
+     - `GET /api/funnel/nodes`
+     - `POST /api/funnel/nodes`
+     - `PUT /api/funnel/nodes/:id`
+     - `DELETE /api/funnel/nodes/:id`
+     - `GET /api/funnel/sessions`
+     - `GET /api/funnel/sessions/:id`
+   - `DELETE` valida que el nodo no esté referenciado ni usado por sesiones activas
+
+5. **Nuevo frontend admin del embudo**
+   - Nuevo archivo: `client/src/pages/Funnel.jsx`
+   - Nuevo route: `/funnel`
+   - Nuevo ítem en sidebar entre Conversaciones y Leads
+   - Tabs:
+     - `Flujo`
+     - `Sesiones activas`
+   - La vista de sesiones escucha SSE por `funnel_session_update`
+   - Desde Embudo se puede saltar a Conversaciones vía `?conversationId=...`
+
+6. **Integración con Talleres**
+   - Los placeholders de presentación:
+     - `[FECHA]`
+     - `[VENUE]`
+     - `[HORA_INICIO]`
+     - `[HORA_FIN]`
+     se reemplazan con el taller más próximo `planned/open`
+   - Talleres nuevos ahora nacen en `planned`:
+     - `server/routes/workshops.js`
+     - `client/src/pages/Workshops.jsx`
+
+7. **Pushinator**
+   - Nuevo archivo: `server/services/pushinator.js`
+   - Toma credenciales desde:
+     - env vars `PUSHINATOR_API_TOKEN`, `PUSHINATOR_CHANNEL_ID`
+     - o `tenant.push_config`
+   - Si falta config, no rompe el flujo
+
+8. **Build y deploy**
+   - `client/dist/` fue reconstruido y commiteado
+   - El cambio funcional quedó finalmente integrado en `main`
+   - Regla operativa acordada: para este proyecto no abrir branches intermedias salvo pedido explícito; Hostinger toma `main`
+
+### Commits relevantes
+- `05fc1d5` — `add embudo module`
+- `c73c133` — `default new workshops to planned`
+
+### Archivos nuevos relevantes
+- `server/routes/funnel.js`
+- `server/services/chatbot/flowEngine.js`
+- `server/services/pushinator.js`
+- `client/src/pages/Funnel.jsx`
+
+### Archivos modificados relevantes
+- `server/db.js`
+- `server/index.js`
+- `server/routes/webhook.js`
+- `server/routes/workshops.js`
+- `client/src/App.jsx`
+- `client/src/components/layout/Sidebar.jsx`
+- `client/src/index.css`
+- `client/src/pages/Conversations.jsx`
+- `client/src/pages/Workshops.jsx`
+
+### Lo pendiente después de estas sesiones
+- Verificar en producción Hostinger que el startup ejecute el seed/migración de `flow_nodes` y `flow_sessions`
+- Validar con credenciales reales si Pushinator está configurado
+- Probar end-to-end con Telegram real:
+  - bienvenida
+  - pregunta AI
+  - bifurcación de terapia
+  - presentación del taller
+  - elección de modalidad
+  - envío QR
+  - OCR de comprobante
+  - escalación
+- Revisar si conviene retirar o archivar el viejo `server/services/chatbot/engine.js` para evitar deuda/confusión futura
+
+---
+
 ## Estado actual: 2026-04-08 — SESIÓN 1 (completada)
 
 ### Resumen
@@ -1167,3 +1293,47 @@ Daniel aclaró que el problema real no era Telegram sino la UI del módulo `Conv
 
 ### Nota
 - No se hizo push en esta sesión todavía
+
+---
+
+## Estado actual: 2026-04-09 — SESIÓN 12 (completada)
+
+### Resumen
+Daniel reportó que el chatbot decía que no había talleres programados aunque sí había uno creado en el admin. La causa exacta quedó verificada en producción: el taller existente estaba en estado `draft`, y el bot solo ofrece talleres en estado `planned` u `open`.
+
+### Hallazgo exacto en producción
+- `GET /api/workshops?limit=20` devolvió:
+  - taller `Constel Work`
+  - fecha `2026-04-18`
+  - estado `draft`
+- Por diseño actual del bot:
+  - `getActiveWorkshops()` filtra `status IN ('open', 'planned')`
+- Conclusión:
+  - el bot no estaba mintiendo ni fallando
+  - el taller existía, pero seguía en borrador
+
+### Lo implementado en esta sesión
+1. **Nuevo default de talleres**
+   - `server/routes/workshops.js`
+   - al crear taller nuevo, si no se manda `status`, ahora queda en `planned` en vez de `draft`
+
+2. **UX más clara en el creador**
+   - `client/src/pages/Workshops.jsx`
+   - el form ahora arranca con `status: 'planned'`
+   - se añadió una aclaración debajo del selector de estado:
+     - el chatbot solo ofrece talleres en estado Planificado o Inscripciones abiertas
+
+### Archivos modificados en sesión 12
+- `server/routes/workshops.js`
+- `client/src/pages/Workshops.jsx`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Verificación hecha
+- `node --check server/routes/workshops.js`: OK
+- `cd client && npm run build`: OK
+
+### Nota importante
+- El fix evita que vuelva a pasar con talleres nuevos
+- El taller ya existente en producción sigue en `draft` hasta que alguien lo cambie manualmente a `planned` u `open`

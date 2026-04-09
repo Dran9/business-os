@@ -244,6 +244,19 @@ Cron           → followups, reminders, analysis batch
   - `client/src/pages/Settings.jsx`
   - `client/src/index.css`
 
+## Estado funcional añadido en sesión 24
+- El toggle de pruebas OCR en `Configuración` fue corregido para que sea realmente intuitivo y operativo
+- Ya no usa checkbox ambiguo ni depende del botón general `Guardar configuración de cobro`
+- Ahora:
+  - se ve como switch visual
+  - el label principal es `Activar pruebas de OCR`
+  - muestra estado claro `Pruebas OCR activas` / `Pruebas OCR desactivadas`
+  - guarda inmediatamente al hacer click
+- Backend:
+  - nuevo endpoint `PUT /api/settings/payment-proof-debug-mode`
+  - actualiza solo `features_enabled.payment_proof_debug_mode`
+  - evita mezclar este cambio con otros ajustes de cobro no guardados
+
 ## Estado funcional añadido en sesión 6
 - Nuevo servicio `server/services/adminEvents.js` para Server-Sent Events admin
 - `server/index.js` ahora expone `GET /api/admin/events`

@@ -48,6 +48,7 @@ export default function Settings({ currentUser }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingPayment, setSavingPayment] = useState(false)
+  const [savingProofDebugMode, setSavingProofDebugMode] = useState(false)
   const [savingSecurity, setSavingSecurity] = useState(false)
   const [paymentLoaded, setPaymentLoaded] = useState(false)
   const [paymentDirty, setPaymentDirty] = useState(false)
@@ -130,6 +131,37 @@ export default function Settings({ currentUser }) {
       alert(err.message)
     } finally {
       setSavingPayment(false)
+    }
+  }
+
+  async function handleProofDebugToggle(nextValue) {
+    setSavingProofDebugMode(true)
+    const previousValue = paymentSettings.payment_proof_debug_mode === true
+    setPaymentSettings((current) => ({
+      ...current,
+      payment_proof_debug_mode: nextValue,
+    }))
+    try {
+      const response = await apiPut('/api/settings/payment-proof-debug-mode', { enabled: nextValue })
+      const enabled = response?.enabled === true
+      setPaymentSettings((current) => ({
+        ...current,
+        payment_proof_debug_mode: enabled,
+      }))
+      setNotice({
+        type: 'success',
+        text: enabled
+          ? 'Pruebas de OCR activadas.'
+          : 'Pruebas de OCR desactivadas.',
+      })
+    } catch (err) {
+      setPaymentSettings((current) => ({
+        ...current,
+        payment_proof_debug_mode: previousValue,
+      }))
+      alert(err.message)
+    } finally {
+      setSavingProofDebugMode(false)
     }
   }
 
@@ -435,29 +467,34 @@ export default function Settings({ currentUser }) {
 
         <div className="card mt-4" style={{ padding: 'var(--space-4)' }}>
           <div className="card-header" style={{ padding: 0, border: 0, marginBottom: 'var(--space-3)' }}>
-            <div>
-              <h3 className="card-title">Modo prueba de comprobantes</h3>
-              <p className="text-muted text-sm mt-4">
-                Si está activo, cualquier imagen o documento que llegue al bot se analiza como comprobante y devuelve diagnóstico OCR aunque la conversación no esté en el nodo de pago.
-              </p>
+            <div className="settings-switch-card">
+              <div>
+                <h3 className="card-title">Activar pruebas de OCR</h3>
+                <p className="text-muted text-sm mt-4">
+                  Si está activo, cualquier imagen o documento que llegue al bot se analiza como comprobante y devuelve diagnóstico OCR aunque la conversación no esté en el nodo de pago.
+                </p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={paymentSettings.payment_proof_debug_mode === true}
+                aria-label="Activar pruebas de OCR"
+                className={`settings-switch ${paymentSettings.payment_proof_debug_mode ? 'active' : ''}`}
+                onClick={() => handleProofDebugToggle(!(paymentSettings.payment_proof_debug_mode === true))}
+                disabled={savingProofDebugMode}
+              >
+                <span className="settings-switch-thumb" />
+              </button>
             </div>
           </div>
-          <label className="settings-toggle">
-            <input
-              type="checkbox"
-              checked={paymentSettings.payment_proof_debug_mode === true}
-              onChange={(event) => {
-                setPaymentSettings((current) => ({
-                  ...current,
-                  payment_proof_debug_mode: event.target.checked,
-                }))
-                markPaymentDirty()
-              }}
-            />
-            <span>
-              {paymentSettings.payment_proof_debug_mode ? 'Sí, activar modo prueba' : 'No, usar solo el flujo normal'}
+          <div className="settings-switch-status">
+            <span className={`badge ${paymentSettings.payment_proof_debug_mode ? 'badge-success' : 'badge'}`}>
+              {paymentSettings.payment_proof_debug_mode ? 'Pruebas OCR activas' : 'Pruebas OCR desactivadas'}
             </span>
-          </label>
+            {savingProofDebugMode ? (
+              <span className="text-muted text-sm">Guardando...</span>
+            ) : null}
+          </div>
           <div className="text-muted text-sm mt-4">
             Úsalo para probar lectura OCR, destinatario, monto, fecha y mensajes de error sin depender del embudo.
           </div>

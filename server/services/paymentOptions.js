@@ -97,6 +97,28 @@ async function updatePaymentSettings(tenantId, { payment_options, payment_destin
   );
 }
 
+async function updatePaymentProofDebugMode(tenantId, enabled) {
+  const currentRows = await query(
+    'SELECT features_enabled FROM tenants WHERE id = ? LIMIT 1',
+    [tenantId]
+  );
+  let features = currentRows[0]?.features_enabled;
+  if (typeof features === 'string') {
+    try {
+      features = JSON.parse(features);
+    } catch {
+      features = {};
+    }
+  }
+  features = features && typeof features === 'object' ? features : {};
+  features.payment_proof_debug_mode = enabled === true;
+
+  await query(
+    'UPDATE tenants SET features_enabled = ? WHERE id = ?',
+    [JSON.stringify(features), tenantId]
+  );
+}
+
 async function updatePaymentQrAsset(tenantId, slot, buffer, mimeType) {
   if (![1, 2, 3, 4].includes(Number(slot))) {
     throw new Error('Slot inválido');
@@ -147,6 +169,7 @@ module.exports = {
   normalizeDestinationAccounts,
   getPaymentSettings,
   updatePaymentSettings,
+  updatePaymentProofDebugMode,
   updatePaymentQrAsset,
   getPaymentQrAsset,
   getActivePaymentOptions,

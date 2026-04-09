@@ -5,6 +5,7 @@ const { tenantMiddleware, invalidateTenantCache } = require('../middleware/tenan
 const {
   getPaymentSettings,
   updatePaymentSettings,
+  updatePaymentProofDebugMode,
   updatePaymentQrAsset,
   getPaymentQrAsset,
 } = require('../services/paymentOptions');
@@ -38,6 +39,18 @@ router.put('/payment-options', authMiddleware, tenantMiddleware, requireManager,
   } catch (err) {
     console.error('[settings/payment-options PUT]', err);
     res.status(500).json({ error: 'Error guardando configuración de pago' });
+  }
+});
+
+router.put('/payment-proof-debug-mode', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
+  try {
+    await updatePaymentProofDebugMode(req.tenantId, req.body?.enabled === true);
+    invalidateTenantCache(req.tenantId);
+    const updated = await getPaymentSettings(req.tenantId);
+    res.json({ enabled: updated.payment_proof_debug_mode === true });
+  } catch (err) {
+    console.error('[settings/payment-proof-debug-mode PUT]', err);
+    res.status(500).json({ error: 'Error guardando modo de prueba OCR' });
   }
 });
 

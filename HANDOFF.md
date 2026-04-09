@@ -89,6 +89,42 @@ Se añadió un modo de prueba para comprobantes en `Configuración`, pensado par
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 25 (completada)
+
+### Resumen
+Se corrigió la UX del modo de prueba OCR porque el primer diseño era confuso y hacía demasiado fácil dejarlo apagado sin darse cuenta. Ahora el control es un switch real, con guardado inmediato e independiente del resto de configuración de cobros.
+
+### Lo implementado en esta sesión
+1. **Switch visual real**
+   - `client/src/pages/Settings.jsx`
+   - `client/src/index.css`
+   - reemplaza el checkbox anterior por un switch bonito
+   - label principal:
+     - `Activar pruebas de OCR`
+   - estado visible:
+     - `Pruebas OCR activas`
+     - `Pruebas OCR desactivadas`
+
+2. **Guardado inmediato**
+   - ya no depende de `Guardar configuración de cobro`
+   - al tocar el switch, guarda al instante
+   - muestra feedback de guardado
+
+3. **Endpoint dedicado**
+   - `server/routes/settings.js`
+   - `server/services/paymentOptions.js`
+   - nuevo endpoint:
+     - `PUT /api/settings/payment-proof-debug-mode`
+   - esto actualiza solo el flag del tenant y no arrastra otros cambios pendientes de QR/montos/cuentas
+
+### Verificación
+1. `node --check` OK en:
+   - `server/services/paymentOptions.js`
+   - `server/routes/settings.js`
+2. `cd client && npm run build`: OK
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 20 (completada)
 
 ### Resumen

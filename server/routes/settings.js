@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const authMiddleware = require('../middleware/auth');
-const { tenantMiddleware } = require('../middleware/tenant');
+const { tenantMiddleware, invalidateTenantCache } = require('../middleware/tenant');
 const {
   getPaymentSettings,
   updatePaymentSettings,
@@ -32,6 +32,7 @@ router.get('/payment-options', authMiddleware, tenantMiddleware, async (req, res
 router.put('/payment-options', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
   try {
     await updatePaymentSettings(req.tenantId, req.body || {});
+    invalidateTenantCache(req.tenantId);
     const updated = await getPaymentSettings(req.tenantId);
     res.json(updated);
   } catch (err) {

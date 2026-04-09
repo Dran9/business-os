@@ -31,6 +31,64 @@ Se reconstruyó `client/dist` para que Hostinger pueda servir los cambios de fro
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 24 (completada, sin push)
+
+### Resumen
+Se añadió un modo de prueba para comprobantes en `Configuración`, pensado para diagnosticar OCR, destinatario, monto, fecha y mensajes del bot sin depender del nodo de pago ni del estado de la conversación.
+
+### Lo implementado en esta sesión
+1. **Nuevo toggle en Configuración**
+   - `client/src/pages/Settings.jsx`
+   - `client/src/index.css`
+   - en el bloque `Cobros, QR y OCR` ahora existe:
+     - `Modo prueba de comprobantes`
+   - el admin puede activarlo o desactivarlo con un toggle sí/no
+
+2. **Persistencia en tenant**
+   - `server/services/paymentOptions.js`
+   - `server/routes/settings.js`
+   - el flag se guarda en:
+     - `features_enabled.payment_proof_debug_mode`
+   - `GET /api/settings/payment-options` ahora lo devuelve
+   - `PUT /api/settings/payment-options` ahora lo guarda
+   - también se invalida el cache del tenant al guardar
+
+3. **Diagnóstico independiente del embudo**
+   - `server/services/chatbot/paymentWorkflow.js`
+   - `server/services/chatbot/flowEngine.js`
+   - cuando el toggle está activo y entra una `image` o `document`:
+     - el bot descarga el archivo
+     - corre OCR
+     - responde con diagnóstico textual
+   - esto ocurre aunque la conversación no esté en `nodo_10_espera_pago`
+
+4. **Qué informa el bot en modo prueba**
+   - monto detectado
+   - fecha y hora detectadas
+   - nombre detectado
+   - banco detectado
+   - referencia detectada
+   - cuenta destino detectada
+   - destinatario detectado
+   - si la cuenta coincide con las cuentas válidas configuradas
+   - si hay un QR/contexto de pago activo en la conversación:
+     - indica también si pasaría o fallaría la validación automática
+
+### Verificación
+1. `node --check` OK en:
+   - `server/services/paymentOptions.js`
+   - `server/routes/settings.js`
+   - `server/services/chatbot/paymentWorkflow.js`
+   - `server/services/chatbot/flowEngine.js`
+
+2. `cd client && npm run build`: OK
+
+### Nota
+- En modo prueba se prioriza el diagnóstico de comprobantes sobre el flujo normal cuando entra una imagen/documento
+- No se hizo push en esta sesión
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 20 (completada)
 
 ### Resumen

@@ -3,7 +3,8 @@ const { broadcast } = require('../adminEvents');
 const { runGroqChat } = require('./llm');
 const { analyzeAndTagInboundMessage } = require('../analysis/tagger');
 const { recalculateLeadScore } = require('../analysis/scorer');
-const { buildPaymentQrResponse, maybeProcessPaymentProof } = require('./paymentWorkflow');
+const { buildPaymentQrResponse, maybeProcessPaymentProof, runPaymentProofDiagnostic } = require('./paymentWorkflow');
+const { getPaymentSettings } = require('../paymentOptions');
 const { getActivePaymentOptions } = require('../paymentOptions');
 const { sendPushinatorNotification } = require('../pushinator');
 const { classifyName } = require('../nameClassifier');
@@ -1293,6 +1294,38 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
   broadcast('lead:change', { id: lead.id, reason: 'inbound-message' }, tenantId);
   broadcast('conversation:change', { id: conversation.id, reason: 'inbound-message' }, tenantId);
   broadcast('message:change', { conversationId: conversation.id, messageId: inboundMessageId, direction: 'inbound' }, tenantId);
+
+  if (['image', 'document'].includes(incoming.contentType)) {
+    const paymentSettings = await getPaymentSettings(tenantId).catch(() => null);
+    if (paymentSettings?.payment_proof_debug_mode) {
+      const diagnosticResponse = await runPaymentProofDiagnostic({
+        tenantId,
+        conversation,
+        incoming: { ...incoming, channel: channelAdapter },
+      }).catch((err) => {
+        console.error('[FlowEngine] Payment proof diagnostic failed:', err.message);
+        return {
+          type: 'text',
+          text: `Modo prueba de comprobantes: ocurrió un error interno.\n${err.message}`,
+        };
+      });
+
+      if (diagnosticResponse) {
+        await sendResponses(channelAdapter, incoming.senderId, conversation.id, tenantId, [diagnosticResponse]);
+        return {
+          lead,
+          conversation,
+          response_text: diagnosticResponse.text || '',
+          buttons: [],
+          action_taken: 'payment_proof_debug',
+          session_id: null,
+          session_context: null,
+          tag_analysis_pending: false,
+          responses: [diagnosticResponse],
+        };
+      }
+    }
+  }
 
   const result = await runFlowEngine({
     tenant_id: tenantId,

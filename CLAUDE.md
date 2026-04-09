@@ -218,6 +218,32 @@ Cron           → followups, reminders, analysis batch
   - mantiene el enrollment en revisión operativa
 - El workflow OCR automático ahora también sincroniza `current_participants` cuando valida un pago
 
+## Estado funcional añadido en sesión 23
+- `Configuración` ahora tiene un toggle `Modo prueba de comprobantes`
+- Se guarda dentro de `features_enabled.payment_proof_debug_mode` del tenant
+- Vive en el mismo bloque de `Cobros, QR y OCR`
+- Cuando está activo:
+  - cualquier imagen o documento que llegue al bot se procesa como prueba de comprobante
+  - no depende de `nodo_10_espera_pago`
+  - no depende de la fase de conversación
+  - el bot responde con diagnóstico OCR:
+    - monto detectado
+    - fecha y hora
+    - nombre y banco
+    - cuenta/destinatario detectados
+    - si la cuenta coincide con las cuentas válidas configuradas
+    - si existe un QR activo en la conversación, también indica si pasaría o fallaría la validación automática
+- Importante:
+  - en este modo se prioriza el diagnóstico sobre el flujo normal
+  - sirve para pruebas operativas de OCR y mensajes de error sin depender del embudo
+- Archivos principales:
+  - `server/services/paymentOptions.js`
+  - `server/routes/settings.js`
+  - `server/services/chatbot/paymentWorkflow.js`
+  - `server/services/chatbot/flowEngine.js`
+  - `client/src/pages/Settings.jsx`
+  - `client/src/index.css`
+
 ## Estado funcional añadido en sesión 6
 - Nuevo servicio `server/services/adminEvents.js` para Server-Sent Events admin
 - `server/index.js` ahora expone `GET /api/admin/events`

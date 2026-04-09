@@ -36,7 +36,7 @@ function normalizeDestinationAccounts(value) {
 
 async function getPaymentSettings(tenantId) {
   const rows = await query(
-    `SELECT payment_options, payment_destination_accounts,
+    `SELECT payment_options, payment_destination_accounts, features_enabled,
             payment_qr_1, payment_qr_2, payment_qr_3, payment_qr_4
      FROM tenants
      WHERE id = ?
@@ -46,6 +46,15 @@ async function getPaymentSettings(tenantId) {
 
   const tenant = rows[0] || {};
   const options = normalizePaymentOptions(tenant.payment_options);
+  let features = tenant.features_enabled;
+  if (typeof features === 'string') {
+    try {
+      features = JSON.parse(features);
+    } catch {
+      features = {};
+    }
+  }
+  features = features && typeof features === 'object' ? features : {};
 
   options.forEach((option, idx) => {
     option.has_qr = !!tenant[`payment_qr_${idx + 1}`];
@@ -54,10 +63,11 @@ async function getPaymentSettings(tenantId) {
   return {
     payment_options: options,
     payment_destination_accounts: normalizeDestinationAccounts(tenant.payment_destination_accounts),
+    payment_proof_debug_mode: features.payment_proof_debug_mode === true,
   };
 }
 
-async function updatePaymentSettings(tenantId, { payment_options, payment_destination_accounts }) {
+async function updatePaymentSettings(tenantId, { payment_options, payment_destination_accounts, payment_proof_debug_mode }) {
   const options = normalizePaymentOptions(payment_options).map(({ slot, has_qr, ...item }) => item);
   const accounts = Array.isArray(payment_destination_accounts)
     ? payment_destination_accounts.map((item) => String(item || '').replace(/\D/g, '')).filter(Boolean).join('\n')
@@ -66,10 +76,24 @@ async function updatePaymentSettings(tenantId, { payment_options, payment_destin
         .map((item) => item.replace(/\D/g, '').trim())
         .filter(Boolean)
         .join('\n');
+  const currentRows = await query(
+    'SELECT features_enabled FROM tenants WHERE id = ? LIMIT 1',
+    [tenantId]
+  );
+  let features = currentRows[0]?.features_enabled;
+  if (typeof features === 'string') {
+    try {
+      features = JSON.parse(features);
+    } catch {
+      features = {};
+    }
+  }
+  features = features && typeof features === 'object' ? features : {};
+  features.payment_proof_debug_mode = payment_proof_debug_mode === true;
 
   await query(
-    'UPDATE tenants SET payment_options = ?, payment_destination_accounts = ? WHERE id = ?',
-    [JSON.stringify(options), accounts || null, tenantId]
+    'UPDATE tenants SET payment_options = ?, payment_destination_accounts = ?, features_enabled = ? WHERE id = ?',
+    [JSON.stringify(options), accounts || null, JSON.stringify(features), tenantId]
   );
 }
 

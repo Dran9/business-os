@@ -379,8 +379,100 @@ async function maybeProcessPaymentProof({ tenantId, conversation, lead, incoming
   };
 }
 
+function buildDiagnosticLines(ocrResult) {
+  return [
+    `Monto detectado: ${ocrResult.amount != null ? `Bs ${ocrResult.amount}` : 'No detectado'}`,
+    `Fecha detectada: ${ocrResult.date || 'No detectada'}`,
+    `Hora detectada: ${ocrResult.time || 'No detectada'}`,
+    `Nombre detectado: ${ocrResult.name || 'No detectado'}`,
+    `Banco detectado: ${ocrResult.bank || 'No detectado'}`,
+    `Referencia detectada: ${ocrResult.reference || 'No detectada'}`,
+    `Cuenta destino detectada: ${ocrResult.destAccount || 'No detectada'}`,
+    `Destinatario detectado: ${ocrResult.destName || 'No detectado'}`,
+    `Cuenta válida según configuración: ${ocrResult.destAccountVerified ? 'Sí' : 'No'}`,
+  ];
+}
+
+async function runPaymentProofDiagnostic({ tenantId, conversation, incoming }) {
+  if (!['image', 'document'].includes(incoming.contentType) || !incoming.mediaFileId) {
+    return null;
+  }
+
+  const media = await incoming.channel.getMedia(incoming.mediaFileId, {
+    filename: incoming.filename,
+    mimeType: incoming.mimeType,
+  });
+
+  if (!media?.buffer) {
+    return {
+      type: 'text',
+      text: 'Modo prueba de comprobantes: no pude descargar el archivo para revisarlo.',
+    };
+  }
+
+  const settings = await getPaymentSettings(tenantId);
+  let ocrResult = null;
+  try {
+    ocrResult = await extractReceiptData(media.buffer, media.mimeType, {
+      validDestinationAccounts: settings.payment_destination_accounts,
+    });
+  } catch (err) {
+    console.error('[payment proof diagnostic]', err);
+    return {
+      type: 'text',
+      text: `Modo prueba de comprobantes: OCR falló con este error:\n${err.message}`,
+    };
+  }
+
+  if (!ocrResult) {
+    return {
+      type: 'text',
+      text: 'Modo prueba de comprobantes: no hubo lectura OCR. Revisa GOOGLE_VISION_API_KEY o la legibilidad del archivo.',
+    };
+  }
+
+  const paymentContext = await getConversationPaymentContext({ tenantId, conversationId: conversation.id });
+  const lines = [
+    'Modo prueba de comprobantes activo.',
+    '',
+    ...buildDiagnosticLines(ocrResult),
+  ];
+
+  if (!paymentContext?.amount) {
+    lines.push('', 'No hay un QR activo asociado a esta conversación. Solo se muestra la lectura OCR.');
+    return { type: 'text', text: lines.join('\n') };
+  }
+
+  const problems = [];
+  if (ocrResult.destAccountVerified !== true) {
+    problems.push({ type: 'destinatario' });
+  }
+  if (Number(paymentContext.amount) !== Number(ocrResult.amount)) {
+    problems.push({ type: 'monto', expectedAmount: paymentContext.amount, receivedAmount: ocrResult.amount });
+  }
+
+  const receiptDateKey = parseReceiptDateKey(ocrResult.date);
+  const contextDateKey = paymentContext.sent_at ? getBoliviaDateKey(paymentContext.sent_at) : null;
+  if (receiptDateKey && contextDateKey && receiptDateKey < contextDateKey) {
+    problems.push({ type: 'fecha_pasada', receiptDate: ocrResult.date, contextDate: contextDateKey });
+  }
+
+  lines.push('', `Monto esperado por el QR activo: Bs ${paymentContext.amount}`);
+  if (problems.length === 0) {
+    lines.push('Diagnóstico: este comprobante pasaría la validación automática.')
+  } else {
+    lines.push('Diagnóstico: este comprobante sería observado o rechazado por:')
+    buildMismatchLines(problems).forEach((line) => {
+      lines.push(`• ${line}`)
+    })
+  }
+
+  return { type: 'text', text: lines.join('\n') };
+}
+
 module.exports = {
   buildEnrollmentPrompt,
   buildPaymentQrResponse,
   maybeProcessPaymentProof,
+  runPaymentProofDiagnostic,
 };

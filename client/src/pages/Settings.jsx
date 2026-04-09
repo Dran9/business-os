@@ -43,6 +43,7 @@ export default function Settings({ currentUser }) {
       { slot: 4, label: 'Precio 4', amount: '', active: true, has_qr: false },
     ],
     payment_destination_accounts: [],
+    payment_proof_debug_mode: false,
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -118,6 +119,7 @@ export default function Settings({ currentUser }) {
           active: option.active,
         })),
         payment_destination_accounts: paymentSettings.payment_destination_accounts,
+        payment_proof_debug_mode: paymentSettings.payment_proof_debug_mode === true,
       }
       const updated = await apiPut('/api/settings/payment-options', payload)
       setPaymentSettings(updated)
@@ -429,6 +431,36 @@ export default function Settings({ currentUser }) {
             placeholder={'Una cuenta por línea\nEjemplo:\n30151182874355\n6896894011'}
           />
           <p className="text-muted text-sm mt-4">El OCR validará el comprobante solo si detecta una de estas cuentas como destino.</p>
+        </div>
+
+        <div className="card mt-4" style={{ padding: 'var(--space-4)' }}>
+          <div className="card-header" style={{ padding: 0, border: 0, marginBottom: 'var(--space-3)' }}>
+            <div>
+              <h3 className="card-title">Modo prueba de comprobantes</h3>
+              <p className="text-muted text-sm mt-4">
+                Si está activo, cualquier imagen o documento que llegue al bot se analiza como comprobante y devuelve diagnóstico OCR aunque la conversación no esté en el nodo de pago.
+              </p>
+            </div>
+          </div>
+          <label className="settings-toggle">
+            <input
+              type="checkbox"
+              checked={paymentSettings.payment_proof_debug_mode === true}
+              onChange={(event) => {
+                setPaymentSettings((current) => ({
+                  ...current,
+                  payment_proof_debug_mode: event.target.checked,
+                }))
+                markPaymentDirty()
+              }}
+            />
+            <span>
+              {paymentSettings.payment_proof_debug_mode ? 'Sí, activar modo prueba' : 'No, usar solo el flujo normal'}
+            </span>
+          </label>
+          <div className="text-muted text-sm mt-4">
+            Úsalo para probar lectura OCR, destinatario, monto, fecha y mensajes de error sin depender del embudo.
+          </div>
         </div>
 
         <button type="button" className="btn btn-primary" disabled={savingPayment} onClick={savePaymentSettings}>

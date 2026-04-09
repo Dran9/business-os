@@ -459,6 +459,25 @@ Cron           → followups, reminders, analysis batch
   - nuevo `client/src/components/ui/ConfirmButton.jsx`
   - acciones destructivas existentes migradas a confirmación de doble click
 
+## Estado funcional añadido en sesión 20
+- Tags automáticos corregidos:
+  - `server/services/analysis/tagger.js` ahora separa:
+    - tags de estado (`quality`, `sentiment`) → reemplazan el anterior
+    - tags de comportamiento (`intent`) → se acumulan sin duplicar
+  - ya no se crean tags sobre `target_type = 'message'`
+- `server/services/chatbot/flowEngine.js` ahora solo corre el tagger cuando:
+  - es el primer mensaje de una sesión nueva
+  - la sesión cambió de nodo
+  - esto se controla con `context.tag_on_next`
+- Nuevo endpoint operativo:
+  - `GET /api/admin/cleanup-tags`
+  - limpia duplicados históricos de `quality`, `sentiment`, `intent`
+  - borra tags viejos por mensaje
+- `server/services/pushinator.js` quedó estandarizado:
+  - env var canónica: `PUSHINATOR_TOKEN`
+  - env var de canal: `PUSHINATOR_CHANNEL_ID`
+  - config tenant: `api_token`, `channel_id`
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

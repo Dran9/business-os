@@ -3,8 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const { initializeDatabase } = require('./db');
+const { initializeDatabase, query } = require('./db');
 const authMiddleware = require('./middleware/auth');
+const { tenantMiddleware } = require('./middleware/tenant');
 const { sseHandler } = require('./services/adminEvents');
 
 const app = express();
@@ -26,12 +27,60 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/admin/events', authMiddleware, sseHandler);
+app.get('/api/admin/cleanup-tags', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const stateCategories = ['quality', 'sentiment'];
+    let deleted = 0;
+
+    for (const category of stateCategories) {
+      const result = await query(
+        `DELETE t1 FROM tags t1
+         INNER JOIN tags t2
+         WHERE t1.tenant_id = t2.tenant_id
+           AND t1.target_type = t2.target_type
+           AND t1.target_id = t2.target_id
+           AND t1.category = t2.category
+           AND t1.category = ?
+           AND t1.id < t2.id
+           AND t1.tenant_id = ?`,
+        [category, req.tenantId]
+      );
+      deleted += result.affectedRows || 0;
+    }
+
+    const behaviorResult = await query(
+      `DELETE t1 FROM tags t1
+       INNER JOIN tags t2
+       WHERE t1.tenant_id = t2.tenant_id
+         AND t1.target_type = t2.target_type
+         AND t1.target_id = t2.target_id
+         AND t1.category = t2.category
+         AND t1.value = t2.value
+         AND t1.category = 'intent'
+         AND t1.id < t2.id
+         AND t1.tenant_id = ?`,
+      [req.tenantId]
+    );
+    deleted += behaviorResult.affectedRows || 0;
+
+    const messageResult = await query(
+      "DELETE FROM tags WHERE target_type = 'message' AND tenant_id = ?",
+      [req.tenantId]
+    );
+    deleted += messageResult.affectedRows || 0;
+
+    res.json({ message: `Limpieza completada. ${deleted} tags eliminados.` });
+  } catch (err) {
+    console.error('[cleanup-tags]', err);
+    res.status(500).json({ error: 'Error limpiando tags' });
+  }
+});
 
 // --- Rutas API ---
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/webhook', require('./routes/webhook'));
-app.use('/api/contacts', authMiddleware, require('./middleware/tenant').tenantMiddleware, require('./routes/contacts'));
+app.use('/api/contacts', authMiddleware, tenantMiddleware, require('./routes/contacts'));
 app.use('/api/leads', require('./routes/leads'));
 app.use('/api/workshops', require('./routes/workshops'));
 app.use('/api/enrollments', require('./routes/enrollments'));

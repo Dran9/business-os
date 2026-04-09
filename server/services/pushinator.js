@@ -2,19 +2,10 @@ const PUSHINATOR_API_URL = 'https://api.pushinator.com/api/v2/notifications/send
 
 function pickPushConfig(rawConfig = {}) {
   const config = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
-
-  const apiToken = process.env.PUSHINATOR_API_TOKEN
-    || config.api_token
-    || config.apiToken
-    || config.token
-    || null;
-
-  const channelId = process.env.PUSHINATOR_CHANNEL_ID
-    || config.channel_id
-    || config.channelId
-    || null;
-
-  return { apiToken, channelId };
+  return {
+    apiToken: process.env.PUSHINATOR_TOKEN || config.api_token || null,
+    channelId: process.env.PUSHINATOR_CHANNEL_ID || config.channel_id || null,
+  };
 }
 
 async function sendPushinatorNotification(rawConfig, content, options = {}) {

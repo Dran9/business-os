@@ -5,6 +5,66 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 20 (completada)
+
+### Resumen
+Se corrigió el sistema de tags para que deje de duplicar estados en cada mensaje inbound. El tagger ahora corre solo cuando el embudo entra a una nueva etapa o cuando arranca una sesión nueva. También se añadió un endpoint de limpieza histórica y se estandarizó la configuración de Pushinator.
+
+### Lo implementado en esta sesión
+1. **Tagger**
+   - `server/services/analysis/tagger.js`
+   - `quality` y `sentiment` ahora son tags de estado:
+     - borran el anterior por categoría antes de insertar el nuevo
+   - `intent` ahora es tag de comportamiento:
+     - solo se inserta si ese valor exacto no existía
+   - ya no se insertan tags sobre `target_type = 'message'`
+
+2. **FlowEngine**
+   - `server/services/chatbot/flowEngine.js`
+   - el tagger dejó de correr en cada inbound
+   - ahora se usa `context.tag_on_next`
+   - se activa:
+     - al crear una sesión nueva
+     - en cada transición de nodo
+   - el análisis se ejecuta después de `runFlowEngine()` y luego limpia el flag
+
+3. **Limpieza histórica**
+   - `server/index.js`
+   - nuevo endpoint:
+     - `GET /api/admin/cleanup-tags`
+   - elimina:
+     - tags viejos duplicados de `quality`
+     - tags viejos duplicados de `sentiment`
+     - duplicados exactos de `intent`
+     - todos los tags viejos de `target_type = 'message'`
+
+4. **Pushinator**
+   - `server/services/pushinator.js`
+   - `.env.example`
+   - configuración simplificada:
+     - env: `PUSHINATOR_TOKEN`
+     - env: `PUSHINATOR_CHANNEL_ID`
+     - tenant config: `api_token`, `channel_id`
+
+5. **Archivo legado**
+   - `server/services/chatbot/engine.js` ya no existe
+   - se verificó que no quedaban llamadas activas al tagger fuera de `flowEngine`
+
+### Verificación
+1. **Sintaxis server**
+   - `node --check` pendiente de esta sesión sobre:
+     - `server/services/analysis/tagger.js`
+     - `server/services/chatbot/flowEngine.js`
+     - `server/services/pushinator.js`
+     - `server/index.js`
+
+2. **Runtime**
+   - pendiente probar con DB real:
+     - `GET /api/admin/cleanup-tags`
+     - no duplicación de tags tras múltiples mensajes
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 19 (completada)
 
 ### Resumen

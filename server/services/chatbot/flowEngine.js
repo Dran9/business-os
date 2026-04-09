@@ -171,6 +171,7 @@ async function getActiveFlowSession(tenantId, conversationId) {
 async function createFlowSession({ tenantId, conversationId, leadId, startNode, context = {} }) {
   const nextContext = {
     ...context,
+    tag_on_next: context.tag_on_next !== false,
     history: Array.isArray(context.history) && context.history.length > 0
       ? context.history
       : [buildHistoryEntry(startNode)],
@@ -271,6 +272,7 @@ async function transitionSessionToNode({ tenantId, session, nextNodeKey, context
 
   const nextContext = {
     ...context,
+    tag_on_next: true,
     history: [...(Array.isArray(context.history) ? context.history : []), buildHistoryEntry(nextNode)],
     pending_input_for: null,
   };
@@ -817,6 +819,7 @@ async function runFlowEngine({
         contact_label: contact.label,
         contact_name: displayName,
         greeting_override: `¡Hola ${displayName}! Qué gusto verte por aquí.`,
+        tag_on_next: true,
       };
     }
 
@@ -825,6 +828,7 @@ async function runFlowEngine({
       initialContext = {
         contact_label: 'nurture',
         groq_context: 'Este contacto ya mostró interés anteriormente. Ser cálido y directo.',
+        tag_on_next: true,
       };
     }
 
@@ -835,13 +839,14 @@ async function runFlowEngine({
         initialContext = {
           contact_label: 'cold_returning',
           groq_context: 'Este contacto ya preguntó antes sin comprar. Ser más directo, menos calentamiento.',
+          tag_on_next: true,
         };
       }
     }
 
     if (!startNode) {
       startNode = await getStartNode(tenant_id);
-      initialContext = { contact_label: contact?.label || 'new' };
+      initialContext = { contact_label: contact?.label || 'new', tag_on_next: true };
     }
 
     if (!startNode) {
@@ -1215,6 +1220,9 @@ async function runFlowEngine({
     response_text: responses[responses.length - 1]?.text || '',
     buttons: responses[responses.length - 1]?.buttons || [],
     action_taken: actionTaken,
+    session_id: session?.id || null,
+    session_context: context,
+    tag_analysis_pending: Boolean(context?.tag_on_next),
     responses,
   };
 }
@@ -1286,28 +1294,6 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
   broadcast('conversation:change', { id: conversation.id, reason: 'inbound-message' }, tenantId);
   broadcast('message:change', { conversationId: conversation.id, messageId: inboundMessageId, direction: 'inbound' }, tenantId);
 
-  const workshop = conversation.workshop_id
-    ? await getLatestWorkshop(tenantId)
-    : null;
-
-  await analyzeAndTagInboundMessage({
-    tenantId,
-    lead,
-    conversation,
-    workshop,
-    messageId: inboundMessageId,
-    messageText: incoming.text,
-  }).catch((err) => {
-    console.error('[FlowEngine] Tagging skipped:', err.message);
-  });
-
-  await recalculateLeadScore({
-    tenantId,
-    leadId: lead.id,
-  }).catch((err) => {
-    console.error('[FlowEngine] Scoring skipped:', err.message);
-  });
-
   const result = await runFlowEngine({
     tenant_id: tenantId,
     conversation_id: conversation.id,
@@ -1316,6 +1302,38 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
     channel: incoming.channel || channelAdapter.channelName,
     content_type: incoming.contentType,
     incoming,
+  });
+
+  if (result.tag_analysis_pending && result.session_id) {
+    const latestConversation = await getConversationById(tenantId, conversation.id);
+    const latestLead = await getLeadById(tenantId, lead.id);
+    const workshop = latestConversation?.workshop_id
+      ? await getLatestWorkshop(tenantId)
+      : null;
+
+    await analyzeAndTagInboundMessage({
+      tenantId,
+      lead: latestLead || lead,
+      conversation: latestConversation || conversation,
+      workshop,
+      messageId: inboundMessageId,
+      messageText: incoming.text,
+    }).catch((err) => {
+      console.error('[FlowEngine] Tagging skipped:', err.message);
+    });
+
+    const nextContext = {
+      ...(result.session_context || {}),
+    };
+    delete nextContext.tag_on_next;
+    await updateFlowSession(result.session_id, { context: nextContext });
+  }
+
+  await recalculateLeadScore({
+    tenantId,
+    leadId: lead.id,
+  }).catch((err) => {
+    console.error('[FlowEngine] Scoring skipped:', err.message);
   });
 
   if (Array.isArray(result.responses) && result.responses.length > 0) {

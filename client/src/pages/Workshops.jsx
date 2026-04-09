@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut, getToken } from '../utils/api'
 import { formatCurrency, formatDate } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
+import BulkActionBar from '../components/ui/BulkActionBar'
+import useSelection from '../hooks/useSelection'
 
 const STATUS_LABELS = {
   draft: 'Borrador',
@@ -37,6 +39,7 @@ export default function Workshops() {
   const [selectedEnrollment, setSelectedEnrollment] = useState(null)
   const [loadingEnrollmentDetail, setLoadingEnrollmentDetail] = useState(false)
   const [manualAmount, setManualAmount] = useState('')
+  const selection = useSelection()
 
   const loadWorkshops = useCallback(() => {
     setLoading(true)
@@ -132,6 +135,24 @@ export default function Workshops() {
     if (!token) return ''
     return `/api/enrollments/${selectedEnrollment.id}/proof?token=${encodeURIComponent(token)}`
   }, [selectedEnrollment])
+  const visibleWorkshopIds = useMemo(() => workshops.map((workshop) => workshop.id), [workshops])
+  const allWorkshopsSelected = visibleWorkshopIds.length > 0 && visibleWorkshopIds.every((id) => selection.isSelected(id))
+
+  async function handleBulkDeleteWorkshops() {
+    const ids = selection.ids()
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiDelete(`/api/workshops/${id}`)))
+      if (editing?.id && ids.includes(editing.id)) {
+        setEditing(null)
+        setShowForm(false)
+      }
+      selection.clear()
+      await Promise.all([loadWorkshops(), loadEnrollments()])
+    } catch (err) {
+      alert(err.message)
+    }
+  }
 
   return (
     <div>
@@ -153,10 +174,24 @@ export default function Workshops() {
       ) : workshops.length === 0 ? (
         <p className="text-muted mt-4">No hay talleres. Crea el primero.</p>
       ) : (
-        <div className="table-container mt-4">
+        <div className="mt-4">
+          <BulkActionBar
+            count={selection.count}
+            onDelete={handleBulkDeleteWorkshops}
+            onClear={selection.clear}
+          />
+          <div className="table-container">
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 40 }}>
+                  <input
+                    type="checkbox"
+                    className="header-checkbox"
+                    checked={allWorkshopsSelected}
+                    onChange={() => selection.toggleAll(visibleWorkshopIds)}
+                  />
+                </th>
                 <th>Nombre</th>
                 <th>Fecha</th>
                 <th>Precio</th>
@@ -169,6 +204,14 @@ export default function Workshops() {
             <tbody>
               {workshops.map((workshop) => (
                 <tr key={workshop.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      className="row-checkbox"
+                      checked={selection.isSelected(workshop.id)}
+                      onChange={() => selection.toggle(workshop.id)}
+                    />
+                  </td>
                   <td className="font-semibold">{workshop.name}</td>
                   <td>{workshop.date ? formatDate(workshop.date) : '-'}</td>
                   <td>{workshop.price ? formatCurrency(workshop.price) : '-'}</td>
@@ -178,13 +221,14 @@ export default function Workshops() {
                   <td>
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleEdit(workshop)}>Editar</button>
-                      <ConfirmButton label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDelete(workshop.id)} />
+                      <ConfirmButton size="sm" label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDelete(workshop.id)} />
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

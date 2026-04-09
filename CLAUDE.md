@@ -489,8 +489,43 @@ Cron           → followups, reminders, analysis batch
 
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
-- No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario
+- **NUNCA abrir branches.** Todo va directo a `main`. Sin excepciones salvo pedido explícito del usuario.
+- Si hay cambios locales no committeados al inicio de una sesión, commitearlos a `main` o hacer stash. NUNCA crear una branch para aislarlos.
+- Cuando se haga un cambio en `client/src/`, al final de la sesión SIEMPRE:
+  1. Correr `cd client && npm run build`
+  2. Commitear `client/dist/`
+  3. Avisar al usuario que el build está listo para push
+- Si las instrucciones dicen "no hacer build", avisar explícitamente: "los cambios de frontend no se verán en producción hasta que se haga build y push"
 - Cuando se haga un cambio funcional, actualizar también `CLAUDE.md` y `HANDOFF.md` en la misma sesión
+
+## Estado funcional añadido en sesión 22
+- Se corrigió el bug crítico del comprobante en `server/services/chatbot/flowEngine.js`
+- Causa:
+  - `paymentWorkflow` esperaba un adapter con método `getMedia()`
+  - `runFlowEngine` estaba recibiendo `incoming.channel` como string (`telegram`)
+- Fix aplicado:
+  - `processIncomingMessage()` ahora inyecta `incoming: { ...incoming, channel: channelAdapter }`
+  - eso vuelve a habilitar descarga de imagen y OCR en `nodo_11_ocr`
+- UI:
+  - `ConfirmButton` ahora usa el design system (`.btn`, `.btn-secondary`, `.btn-danger`)
+  - tiene ícono de basurero, estado de confirmación rojo y variante `size="sm"`
+  - ya no quedan `window.confirm()` ni `confirm()` en `client/src`
+- Selección masiva añadida en:
+  - `Contacts`
+  - `Leads`
+  - `Conversations`
+  - `Workshops`
+  - `Marketing`
+  - `Finance`
+- Componentes nuevos:
+  - `client/src/hooks/useSelection.js`
+  - `client/src/components/ui/BulkActionBar.jsx`
+- `Conversations` ahora:
+  - permite eliminar conversaciones individualmente o en lote
+  - ordena visualmente tags por prioridad `quality -> sentiment -> intent`
+  - muestra máximo 4 tags y luego badge `+N`
+- `GET /api/admin/cleanup-tags` ya existía y se mantuvo como endpoint operativo
+- `client/dist/` fue reconstruido para Hostinger al final de la sesión
 
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar

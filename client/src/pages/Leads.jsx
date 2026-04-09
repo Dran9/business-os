@@ -3,6 +3,8 @@ import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency, formatDate, timeAgo } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
+import BulkActionBar from '../components/ui/BulkActionBar'
+import useSelection from '../hooks/useSelection'
 
 const STATUS_LABELS = {
   new: 'Nuevo',
@@ -67,6 +69,7 @@ export default function Leads() {
   const [savingTag, setSavingTag] = useState(false)
   const [tagDraft, setTagDraft] = useState({ category: 'custom', value: '' })
   const deferredSearch = useDeferredValue(search)
+  const selection = useSelection()
 
   const load = useCallback(() => {
     setLoading(true)
@@ -171,6 +174,8 @@ export default function Leads() {
     }
     return { income, expense }
   }, [selectedLead?.transactions])
+  const visibleLeadIds = useMemo(() => leads.map((lead) => lead.id), [leads])
+  const allLeadsSelected = visibleLeadIds.length > 0 && visibleLeadIds.every((id) => selection.isSelected(id))
 
   async function handleTagSubmit(event) {
     event.preventDefault()
@@ -192,7 +197,6 @@ export default function Leads() {
 
   async function handleRemoveTag(tagId) {
     if (!selectedId) return
-    if (!confirm('¿Quitar este tag manual?')) return
     try {
       await apiDelete(`/api/leads/${selectedId}/tags/${tagId}`)
       await Promise.all([load(), loadLeadDetail(selectedId)])
@@ -240,6 +244,24 @@ export default function Leads() {
     }
   }
 
+  async function handleBulkDeleteLeads() {
+    const ids = selection.ids()
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiDelete(`/api/leads/${id}`)))
+      if (selectedId && ids.includes(selectedId)) {
+        setSelectedLead(null)
+        setSelectedId(null)
+        setAgendaBundle(null)
+        setAgendaMatches([])
+      }
+      selection.clear()
+      await load()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
@@ -276,6 +298,14 @@ export default function Leads() {
         ))}
       </div>
 
+      <div className="mt-4">
+        <BulkActionBar
+          count={selection.count}
+          onDelete={handleBulkDeleteLeads}
+          onClear={selection.clear}
+        />
+      </div>
+
       {loading ? (
         <p className="text-muted mt-4">Cargando...</p>
       ) : leads.length === 0 ? (
@@ -286,6 +316,14 @@ export default function Leads() {
             <table className="table">
               <thead>
                 <tr>
+                  <th style={{ width: 40 }}>
+                    <input
+                      type="checkbox"
+                      className="header-checkbox"
+                      checked={allLeadsSelected}
+                      onChange={() => selection.toggleAll(visibleLeadIds)}
+                    />
+                  </th>
                   <th>Nombre</th>
                   <th>Teléfono/ID</th>
                   <th>Fuente</th>
@@ -298,10 +336,18 @@ export default function Leads() {
                 {leads.map((lead) => (
                   <tr
                     key={lead.id}
-                    className={selectedId === lead.id ? 'table-row-selected' : ''}
+                    className={selectedId === lead.id || selection.isSelected(lead.id) ? 'table-row-selected' : ''}
                     onClick={() => setSelectedId(lead.id)}
                     style={{ cursor: 'pointer' }}
                   >
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="row-checkbox"
+                        checked={selection.isSelected(lead.id)}
+                        onChange={() => selection.toggle(lead.id)}
+                      />
+                    </td>
                     <td className="font-semibold">{lead.name || 'Sin nombre'}</td>
                     <td className="text-secondary">{lead.phone}</td>
                     <td className="text-secondary">{lead.source || '-'}</td>
@@ -353,19 +399,19 @@ export default function Leads() {
                     {selectedLead.tags?.length > 0 ? (
                       <div className="flex gap-1 mt-2" style={{ flexWrap: 'wrap' }}>
                         {selectedLead.tags.map((tag) => (
-                          <span key={tag.id} className={`${TAG_CLASSES[tag.category] || 'tag tag-custom'} removable-tag`}>
-                            {tag.value}
+                          <div key={tag.id} className="flex items-center gap-1" style={{ flexWrap: 'nowrap' }}>
+                            <span className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>
+                              {tag.value}
+                            </span>
                             {tag.source === 'manual' && (
-                              <button
-                                type="button"
-                                className="tag-remove-btn"
-                                onClick={() => handleRemoveTag(tag.id)}
-                                aria-label={`Quitar tag ${tag.value}`}
-                              >
-                                ×
-                              </button>
+                              <ConfirmButton
+                                size="sm"
+                                label="Eliminar"
+                                confirmLabel="¿Eliminar?"
+                                onConfirm={() => handleRemoveTag(tag.id)}
+                              />
                             )}
-                          </span>
+                          </div>
                         ))}
                       </div>
                     ) : (

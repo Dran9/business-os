@@ -3,6 +3,8 @@ import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
+import BulkActionBar from '../components/ui/BulkActionBar'
+import useSelection from '../hooks/useSelection'
 
 const STATUS_OPTIONS = ['draft', 'active', 'paused', 'completed']
 const PLATFORM_OPTIONS = ['meta', 'instagram', 'facebook', 'tiktok', 'google', 'whatsapp', 'referidos', 'otros']
@@ -30,6 +32,7 @@ export default function Marketing() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
   const deferredSearch = useDeferredValue(search)
+  const selection = useSelection()
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -71,6 +74,23 @@ export default function Marketing() {
     if (!summary) return ''
     return Number(summary.profit || 0) >= 0 ? 'positive' : 'negative'
   }, [summary])
+  const visibleCampaignIds = useMemo(() => campaigns.map((campaign) => campaign.id), [campaigns])
+  const allCampaignsSelected = visibleCampaignIds.length > 0 && visibleCampaignIds.every((id) => selection.isSelected(id))
+
+  async function handleBulkDeleteCampaigns() {
+    const ids = selection.ids()
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiDelete(`/api/marketing/${id}`)))
+      if (editing?.id && ids.includes(editing.id)) {
+        setEditing(null)
+      }
+      selection.clear()
+      await loadData()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
 
   return (
     <div>
@@ -171,6 +191,11 @@ export default function Marketing() {
         <div className="card-header">
           <h2 className="card-title">Campañas</h2>
         </div>
+        <BulkActionBar
+          count={selection.count}
+          onDelete={handleBulkDeleteCampaigns}
+          onClear={selection.clear}
+        />
         {loading ? (
           <p className="text-muted">Cargando campañas...</p>
         ) : campaigns.length === 0 ? (
@@ -179,6 +204,14 @@ export default function Marketing() {
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 40 }}>
+                  <input
+                    type="checkbox"
+                    className="header-checkbox"
+                    checked={allCampaignsSelected}
+                    onChange={() => selection.toggleAll(visibleCampaignIds)}
+                  />
+                </th>
                 <th>Campaña</th>
                 <th>Taller</th>
                 <th>Plataforma</th>
@@ -194,6 +227,14 @@ export default function Marketing() {
             <tbody>
               {campaigns.map((campaign) => (
                 <tr key={campaign.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      className="row-checkbox"
+                      checked={selection.isSelected(campaign.id)}
+                      onChange={() => selection.toggle(campaign.id)}
+                    />
+                  </td>
                   <td>
                     <div className="font-semibold">{campaign.name}</div>
                     <div className="text-sm text-muted">{campaign.started_at || 'Sin fecha'}{campaign.ended_at ? ` → ${campaign.ended_at}` : ''}</div>
@@ -212,6 +253,7 @@ export default function Marketing() {
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(campaign)}>Editar</button>
                       <ConfirmButton
+                        size="sm"
                         label="Eliminar"
                         confirmLabel="¿Eliminar?"
                         onConfirm={async () => {

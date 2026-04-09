@@ -370,10 +370,16 @@ Se implementó el módulo completo **Embudo** con backend, frontend, schema nuev
      - o `tenant.push_config`
    - Si falta config, no rompe el flujo
 
-8. **Build y deploy**
+8. **Build y deploy — REGLAS ESTRICTAS**
    - `client/dist/` fue reconstruido y commiteado
    - El cambio funcional quedó finalmente integrado en `main`
-   - Regla operativa acordada: para este proyecto no abrir branches intermedias salvo pedido explícito; Hostinger toma `main`
+   - **NUNCA abrir branches.** Todo va directo a `main`. Sin excepciones salvo pedido explícito del usuario.
+   - Si hay cambios locales no committeados al inicio de una sesión, commitearlos a `main` o hacer stash. NUNCA crear una branch para aislarlos.
+   - Cuando se haga un cambio en `client/src/`, al final de la sesión SIEMPRE:
+     1. Correr `cd client && npm run build`
+     2. Commitear `client/dist/`
+     3. Avisar al usuario que el build está listo para push
+   - Si las instrucciones dicen "no hacer build", avisar explícitamente: "los cambios de frontend no se verán en producción hasta que se haga build y push"
 
 ### Commits relevantes
 - `05fc1d5` — `add embudo module`
@@ -1618,3 +1624,94 @@ Daniel reportó que el chatbot decía que no había talleres programados aunque 
 ### Nota importante
 - El fix evita que vuelva a pasar con talleres nuevos
 - El taller ya existente en producción sigue en `draft` hasta que alguien lo cambie manualmente a `planned` u `open`
+
+---
+
+## Estado actual: 2026-04-09 — SESIÓN 13 (completada, sin push)
+
+### Resumen
+Se corrigió el bloqueo crítico que impedía procesar comprobantes enviados como imagen al bot. Además se unificó toda la UX de borrado con `ConfirmButton`, se añadió selección masiva con eliminación en lote en los módulos con tablas y se limitó visualmente el ruido de tags en conversaciones.
+
+### Hallazgo exacto del bug crítico
+- En `server/services/chatbot/paymentWorkflow.js`, `maybeProcessPaymentProof()` llama:
+  - `incoming.channel.getMedia(...)`
+- Pero desde `flowEngine`, `incoming.channel` estaba llegando como string (`telegram`) en vez del adapter real
+- Resultado:
+  - la imagen no se descargaba
+  - el OCR no corría
+  - el flujo quedaba detenido en `nodo_10_espera_pago`
+
+### Lo implementado en esta sesión
+1. **Fix del comprobante**
+   - `server/services/chatbot/flowEngine.js`
+   - `processIncomingMessage()` ahora pasa:
+     - `incoming: { ...incoming, channel: channelAdapter }`
+   - Con esto `paymentWorkflow` vuelve a tener acceso a `getMedia()`
+
+2. **ConfirmButton rediseñado**
+   - `client/src/components/ui/ConfirmButton.jsx`
+   - ahora usa el design system real de la app
+   - agrega ícono de basurero
+   - soporta `size="sm"`
+   - se eliminaron las clases viejas `.confirm-btn` y `.confirm-btn--danger`
+
+3. **Selección masiva y borrado en lote**
+   - nuevos:
+     - `client/src/hooks/useSelection.js`
+     - `client/src/components/ui/BulkActionBar.jsx`
+   - implementado en:
+     - `Contacts`
+     - `Leads`
+     - `Conversations`
+     - `Workshops`
+     - `Marketing`
+     - `Finance`
+
+4. **Conversaciones más limpias**
+   - `client/src/pages/Conversations.jsx`
+   - delete individual desde la toolbar del chat
+   - delete masivo desde la lista
+   - tags ordenados por prioridad:
+     - `quality`
+     - `sentiment`
+     - `intent`
+   - máximo 4 visibles + badge `+N`
+
+5. **Limpieza de confirm nativo**
+   - ya no quedan `window.confirm()` ni `confirm()` en `client/src`
+   - el último caso estaba en `Leads.jsx` para quitar tags manuales
+
+6. **Build para Hostinger**
+   - `cd client && npm run build`
+   - `client/dist/*` actualizado en esta misma sesión
+
+### Archivos modificados en sesión 13
+- `server/services/chatbot/flowEngine.js`
+- `client/src/components/ui/ConfirmButton.jsx`
+- `client/src/components/ui/BulkActionBar.jsx`
+- `client/src/hooks/useSelection.js`
+- `client/src/index.css`
+- `client/src/pages/Contacts.jsx`
+- `client/src/pages/Leads.jsx`
+- `client/src/pages/Conversations.jsx`
+- `client/src/pages/Workshops.jsx`
+- `client/src/pages/Marketing.jsx`
+- `client/src/pages/Finance.jsx`
+- `client/src/pages/Funnel.jsx`
+- `client/src/pages/Settings.jsx`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Verificación hecha
+- `node --check server/services/chatbot/flowEngine.js`: OK
+- búsqueda de `confirm(` en `client/src`: 0 resultados
+- `cd client && npm run build`: OK
+- `node server/index.js`:
+  - no arrancó en este workspace por credenciales locales de MySQL vacías
+  - error visto: `ER_ACCESS_DENIED_ERROR` para `''@'localhost'`
+  - no apunta a error de sintaxis del fix
+
+### Nota
+- Los cambios están listos para push a `main`
+- En esta sesión no se hizo push por instrucción explícita

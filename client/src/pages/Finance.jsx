@@ -3,6 +3,8 @@ import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
+import BulkActionBar from '../components/ui/BulkActionBar'
+import useSelection from '../hooks/useSelection'
 
 const CATEGORIES = ['taller', 'publicidad', 'venue', 'materiales', 'herramientas', 'transporte', 'otros']
 
@@ -40,6 +42,7 @@ export default function Finance() {
   const [savingGoal, setSavingGoal] = useState(false)
   const [goalInput, setGoalInput] = useState('')
   const [editing, setEditing] = useState(null)
+  const selection = useSelection()
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -94,6 +97,23 @@ export default function Finance() {
     if (!summary) return ''
     return summary.net >= 0 ? 'positive' : 'negative'
   }, [summary])
+  const visibleTransactionIds = useMemo(() => transactions.map((row) => row.id), [transactions])
+  const allTransactionsSelected = visibleTransactionIds.length > 0 && visibleTransactionIds.every((id) => selection.isSelected(id))
+
+  async function handleBulkDeleteTransactions() {
+    const ids = selection.ids()
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiDelete(`/api/finance/transactions/${id}`)))
+      if (editing?.id && ids.includes(editing.id)) {
+        setEditing(null)
+      }
+      selection.clear()
+      await loadData()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
 
   return (
     <div>
@@ -161,6 +181,11 @@ export default function Finance() {
       />
 
       <div className="table-container mt-4">
+        <BulkActionBar
+          count={selection.count}
+          onDelete={handleBulkDeleteTransactions}
+          onClear={selection.clear}
+        />
         {loading ? (
           <p className="text-muted">Cargando transacciones...</p>
         ) : transactions.length === 0 ? (
@@ -169,6 +194,14 @@ export default function Finance() {
           <table className="table">
             <thead>
               <tr>
+                <th style={{ width: 40 }}>
+                  <input
+                    type="checkbox"
+                    className="header-checkbox"
+                    checked={allTransactionsSelected}
+                    onChange={() => selection.toggleAll(visibleTransactionIds)}
+                  />
+                </th>
                 <th>Fecha</th>
                 <th>Tipo</th>
                 <th>Categoría</th>
@@ -180,6 +213,14 @@ export default function Finance() {
             <tbody>
               {transactions.map((row) => (
                 <tr key={row.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      className="row-checkbox"
+                      checked={selection.isSelected(row.id)}
+                      onChange={() => selection.toggle(row.id)}
+                    />
+                  </td>
                   <td>{row.date}</td>
                   <td><span className={row.type === 'income' ? 'badge badge-success' : 'badge badge-warning'}>{row.type === 'income' ? 'Ingreso' : 'Gasto'}</span></td>
                   <td className="text-secondary">{row.category}</td>
@@ -189,6 +230,7 @@ export default function Finance() {
                     <div className="flex gap-2">
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(row)}>Editar</button>
                       <ConfirmButton
+                        size="sm"
                         label="Eliminar"
                         confirmLabel="¿Eliminar?"
                         onConfirm={async () => {

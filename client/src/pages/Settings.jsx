@@ -499,8 +499,9 @@ export default function Settings({ currentUser }) {
                             )}
                             {member.id !== currentUser?.id && (
                               <ConfirmButton
+                                size="sm"
                                 label="Eliminar"
-                                confirmLabel="¿Eliminar?"
+                                confirmLabel="¿Eliminar usuario?"
                                 onConfirm={async () => {
                                   try {
                                     await apiDelete(`/api/team/${member.id}`)

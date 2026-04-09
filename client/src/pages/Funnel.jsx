@@ -389,7 +389,7 @@ export default function Funnel() {
                   <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleEditNode(node)}>
                     Editar
                   </button>
-                  <ConfirmButton label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDeleteNode(node)} />
+                  <ConfirmButton size="sm" label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDeleteNode(node)} />
                 </div>
               </div>
             ))}

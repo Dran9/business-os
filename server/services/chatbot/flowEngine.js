@@ -1301,7 +1301,7 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
     message_text: incoming.text,
     channel: incoming.channel || channelAdapter.channelName,
     content_type: incoming.contentType,
-    incoming,
+    incoming: { ...incoming, channel: channelAdapter },
   });
 
   if (result.tag_analysis_pending && result.session_id) {

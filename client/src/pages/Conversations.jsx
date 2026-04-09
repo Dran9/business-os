@@ -1,8 +1,11 @@
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { apiGet, apiPost, apiPut } from '../utils/api'
+import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { timeAgo } from '../utils/dates'
+import ConfirmButton from '../components/ui/ConfirmButton'
+import BulkActionBar from '../components/ui/BulkActionBar'
+import useSelection from '../hooks/useSelection'
 
 const STATUS_LABELS = {
   active: 'Activa',
@@ -48,11 +51,14 @@ export default function Conversations() {
   const conversationsListRef = useRef(null)
   const messagesRef = useRef(null)
   const requestedConversationId = Number(searchParams.get('conversationId') || 0) || null
+  const selection = useSelection()
 
   const selected = useMemo(
     () => conversations.find((item) => item.id === selectedId) || null,
     [conversations, selectedId]
   )
+  const visibleConversationIds = useMemo(() => conversations.map((conversation) => conversation.id), [conversations])
+  const allConversationsSelected = visibleConversationIds.length > 0 && visibleConversationIds.every((id) => selection.isSelected(id))
 
   const loadConversations = useCallback(() => {
     setLoading(true)
@@ -223,6 +229,37 @@ export default function Conversations() {
     )))
   }
 
+  async function handleDeleteConversation(conversationId = selected?.id) {
+    if (!conversationId) return
+    try {
+      await apiDelete(`/api/conversations/${conversationId}`)
+      if (selectedId === conversationId) {
+        setSelectedId(null)
+        setMessages([])
+      }
+      selection.clear()
+      await loadConversations()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  async function handleBulkDeleteConversations() {
+    const ids = selection.ids()
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiDelete(`/api/conversations/${id}`)))
+      if (selectedId && ids.includes(selectedId)) {
+        setSelectedId(null)
+        setMessages([])
+      }
+      selection.clear()
+      await loadConversations()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
@@ -263,44 +300,80 @@ export default function Conversations() {
         />
       </div>
 
+      <div className="mt-4">
+        <BulkActionBar
+          count={selection.count}
+          onDelete={handleBulkDeleteConversations}
+          onClear={selection.clear}
+        />
+      </div>
+
       <div className="conversations-layout mt-4">
         <div ref={conversationsListRef} className="conversations-list">
           {loading ? (
             <p className="text-muted">Cargando...</p>
           ) : conversations.length === 0 ? (
             <p className="text-muted">No hay conversaciones para este filtro.</p>
-          ) : conversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              className={`conversation-item ${selected?.id === conversation.id ? 'active' : ''}`}
-              onClick={() => setSelectedId(conversation.id)}
-            >
-              <div className="flex justify-between items-center gap-2">
-                <span className="font-semibold">{conversation.lead_name || conversation.lead_phone}</span>
-                <span className="text-xs text-muted">{timeAgo(conversation.last_message_at)}</span>
+          ) : (
+            <>
+              <div className="conversation-list-header">
+                <input
+                  type="checkbox"
+                  className="header-checkbox"
+                  checked={allConversationsSelected}
+                  onChange={() => selection.toggleAll(visibleConversationIds)}
+                />
+                <span>Seleccionar visibles</span>
               </div>
-              {conversation.workshop_name && (
-                <div className="text-xs text-secondary">{conversation.workshop_name}</div>
-              )}
-              <div className="conversation-item-meta">
-                <span className="text-xs text-muted">Asignado: {conversation.assigned_to || 'bot'}</span>
-                <span className={inboxStateBadgeClass(conversation.inbox_state)}>
-                  {INBOX_STATE_LABELS[conversation.inbox_state] || 'Abierta'}
-                </span>
-              </div>
-              <div className="text-sm text-muted truncate" style={{ marginTop: 2 }}>
-                {conversation.last_message || 'Sin mensajes'}
-              </div>
-              {conversation.tags && conversation.tags.length > 0 && (
-                <div className="flex gap-1" style={{ marginTop: 6, flexWrap: 'wrap' }}>
-                  {conversation.tags.map((tag, index) => (
-                    <span key={index} className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>{tag.value}</span>
-                  ))}
-                </div>
-              )}
-            </button>
-          ))}
+              {conversations.map((conversation) => {
+                const sortedTags = [...(conversation.tags || [])]
+                  .sort((a, b) => (tagPriority(a.category) - tagPriority(b.category)))
+                const visibleTags = sortedTags.slice(0, 4)
+                const extraCount = Math.max(0, sortedTags.length - 4)
+
+                return (
+                  <div key={conversation.id} className="conversation-select-row">
+                    <input
+                      type="checkbox"
+                      className="row-checkbox"
+                      checked={selection.isSelected(conversation.id)}
+                      onChange={() => selection.toggle(conversation.id)}
+                    />
+                    <button
+                      type="button"
+                      className={`conversation-item ${selected?.id === conversation.id ? 'active' : ''}`}
+                      onClick={() => setSelectedId(conversation.id)}
+                    >
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="font-semibold">{conversation.lead_name || conversation.lead_phone}</span>
+                        <span className="text-xs text-muted">{timeAgo(conversation.last_message_at)}</span>
+                      </div>
+                      {conversation.workshop_name && (
+                        <div className="text-xs text-secondary">{conversation.workshop_name}</div>
+                      )}
+                      <div className="conversation-item-meta">
+                        <span className="text-xs text-muted">Asignado: {conversation.assigned_to || 'bot'}</span>
+                        <span className={inboxStateBadgeClass(conversation.inbox_state)}>
+                          {INBOX_STATE_LABELS[conversation.inbox_state] || 'Abierta'}
+                        </span>
+                      </div>
+                      <div className="text-sm text-muted truncate" style={{ marginTop: 2 }}>
+                        {conversation.last_message || 'Sin mensajes'}
+                      </div>
+                      {visibleTags.length > 0 && (
+                        <div className="flex gap-1" style={{ marginTop: 6, flexWrap: 'wrap' }}>
+                          {visibleTags.map((tag) => (
+                            <span key={tag.id} className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>{tag.value}</span>
+                          ))}
+                          {extraCount > 0 && <span className="tag tag--more">+{extraCount}</span>}
+                        </div>
+                      )}
+                    </button>
+                  </div>
+                )
+              })}
+            </>
+          )}
         </div>
 
         <div className="conversation-chat">
@@ -318,6 +391,12 @@ export default function Conversations() {
                   </div>
                 </div>
                 <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <ConfirmButton
+                    size="sm"
+                    label="Eliminar"
+                    confirmLabel="¿Eliminar conversación?"
+                    onConfirm={() => handleDeleteConversation(selected.id)}
+                  />
                   {['open', 'pending', 'resolved'].map((state) => (
                     <button
                       key={state}
@@ -424,6 +503,13 @@ export default function Conversations() {
       </div>
     </div>
   )
+}
+
+function tagPriority(category) {
+  if (category === 'quality') return 1
+  if (category === 'sentiment') return 2
+  if (category === 'intent') return 3
+  return 9
 }
 
 function inboxStateBadgeClass(value) {

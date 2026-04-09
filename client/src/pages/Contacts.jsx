@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { timeAgo } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
+import BulkActionBar from '../components/ui/BulkActionBar'
+import useSelection from '../hooks/useSelection'
 
 const LABEL_OPTIONS = [
   { value: '', label: 'Todos los labels' },
@@ -58,6 +60,7 @@ export default function Contacts() {
   const [creating, setCreating] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(initialForm())
+  const selection = useSelection()
 
   const loadContacts = useCallback(async () => {
     setLoading(true)
@@ -128,6 +131,8 @@ export default function Contacts() {
   }, [creating, loadDetail, selectedId])
 
   const currentLeadRows = useMemo(() => selectedContact?.leads || [], [selectedContact?.leads])
+  const visibleContactIds = useMemo(() => contacts.map((contact) => contact.id), [contacts])
+  const allContactsSelected = visibleContactIds.length > 0 && visibleContactIds.every((id) => selection.isSelected(id))
 
   function beginCreate() {
     setCreating(true)
@@ -228,6 +233,24 @@ export default function Contacts() {
     }
   }
 
+  async function handleBulkDeleteContacts() {
+    const ids = selection.ids()
+    if (ids.length === 0) return
+    try {
+      await Promise.all(ids.map((id) => apiDelete(`/api/contacts/${id}`)))
+      if (selectedId && ids.includes(selectedId)) {
+        setSelectedContact(null)
+        setSelectedId(null)
+        setEditing(false)
+        setCreating(false)
+      }
+      selection.clear()
+      await loadContacts()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
@@ -253,6 +276,14 @@ export default function Contacts() {
         </select>
       </div>
 
+      <div className="mt-4">
+        <BulkActionBar
+          count={selection.count}
+          onDelete={handleBulkDeleteContacts}
+          onClear={selection.clear}
+        />
+      </div>
+
       <div className="crm-layout mt-4">
         <div className="table-container card">
           {loading ? (
@@ -263,6 +294,14 @@ export default function Contacts() {
             <table className="table">
               <thead>
                 <tr>
+                  <th style={{ width: 40 }}>
+                    <input
+                      type="checkbox"
+                      className="header-checkbox"
+                      checked={allContactsSelected}
+                      onChange={() => selection.toggleAll(visibleContactIds)}
+                    />
+                  </th>
                   <th>Nombre</th>
                   <th>Teléfono</th>
                   <th>Calidad nombre</th>
@@ -277,7 +316,7 @@ export default function Contacts() {
                 {contacts.map((contact) => (
                   <tr
                     key={contact.id}
-                    className={selectedId === contact.id && !creating ? 'table-row-selected' : ''}
+                    className={selectedId === contact.id && !creating || selection.isSelected(contact.id) ? 'table-row-selected' : ''}
                     onClick={() => {
                       setCreating(false)
                       setEditing(false)
@@ -285,6 +324,14 @@ export default function Contacts() {
                     }}
                     style={{ cursor: 'pointer' }}
                   >
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        className="row-checkbox"
+                        checked={selection.isSelected(contact.id)}
+                        onChange={() => selection.toggle(contact.id)}
+                      />
+                    </td>
                     <td className="font-semibold">{contact.clean_name || contact.wa_name || 'Sin nombre'}</td>
                     <td className="text-secondary">{contact.phone}</td>
                     <td><span className={QUALITY_BADGES[contact.name_quality] || 'badge'}>{formatQuality(contact.name_quality)}</span></td>
@@ -338,8 +385,8 @@ export default function Contacts() {
                       Editar
                     </button>
                     <ConfirmButton
-                      label="Borrar"
-                      confirmLabel="¿Borrar contacto?"
+                      label="Eliminar"
+                      confirmLabel="¿Eliminar contacto?"
                       onConfirm={handleDeleteContact}
                     />
                   </div>

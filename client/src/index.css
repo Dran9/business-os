@@ -285,24 +285,6 @@ body {
   font-size: var(--font-size-base);
 }
 
-.confirm-btn {
-  padding: 6px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.confirm-btn--danger {
-  background: var(--color-danger);
-  border-color: var(--color-danger);
-  color: #fff;
-  font-weight: 600;
-}
-
 /* --- INPUTS --- */
 .input {
   width: 100%;
@@ -347,6 +329,45 @@ body {
 .tag-behavior   { background: #ede9fe; color: #6d28d9; }
 .tag-quality    { background: #ffedd5; color: #c2410c; }
 .tag-custom     { background: #f3f4f6; color: #4b5563; }
+.tag--more {
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+/* --- BULK SELECTION --- */
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--color-border);
+}
+
+.bulk-count {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.row-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.header-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
 
 /* --- TABLAS --- */
 .table-container {
@@ -814,6 +835,26 @@ body {
   border: 0;
   background: transparent;
   color: inherit;
+}
+
+.conversation-list-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.conversation-select-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.conversation-select-row + .conversation-select-row {
+  margin-top: 2px;
 }
 
 .conversation-item:hover {

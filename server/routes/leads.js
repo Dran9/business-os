@@ -9,7 +9,7 @@ const router = express.Router();
 // GET /api/leads — listar leads
 router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    const { status, source, search, page = 1, limit = 50 } = req.query;
+    const { status, source, search, view, page = 1, limit = 50 } = req.query;
     let sql = 'SELECT * FROM leads WHERE tenant_id = ?';
     const params = [req.tenantId];
 
@@ -24,6 +24,18 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
     if (search) {
       sql += ' AND (name LIKE ? OR phone LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
+    }
+    if (view === 'hot') {
+      sql += " AND quality_score >= 70 AND status NOT IN ('converted', 'lost')";
+    }
+    if (view === 'followup') {
+      sql += " AND status NOT IN ('converted', 'lost') AND last_contact_at IS NOT NULL AND last_contact_at <= DATE_SUB(NOW(), INTERVAL 48 HOUR)";
+    }
+    if (view === 'converted') {
+      sql += " AND status = 'converted'";
+    }
+    if (view === 'agenda_pending') {
+      sql += ' AND agenda_client_id IS NULL';
     }
 
     sql += ' ORDER BY last_contact_at DESC';
@@ -173,6 +185,93 @@ router.put('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   } catch (err) {
     console.error('[leads PUT]', err);
     res.status(500).json({ error: 'Error actualizando lead' });
+  }
+});
+
+// POST /api/leads/:id/tags — agregar tag manual
+router.post('/:id/tags', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const value = String(req.body.value || '').trim();
+    const category = String(req.body.category || 'custom').trim();
+    const color = req.body.color ? String(req.body.color).trim() : null;
+
+    if (!value) {
+      return res.status(400).json({ error: 'Valor del tag requerido' });
+    }
+
+    const leadRows = await query('SELECT id FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1', [req.params.id, req.tenantId]);
+    if (!leadRows[0]) {
+      return res.status(404).json({ error: 'Lead no encontrado' });
+    }
+
+    const existing = await query(
+      `SELECT id FROM tags
+       WHERE tenant_id = ? AND target_type = 'lead' AND target_id = ? AND category = ? AND value = ?
+       LIMIT 1`,
+      [req.tenantId, Number(req.params.id), category, value]
+    );
+
+    if (existing[0]) {
+      return res.json({ id: existing[0].id, message: 'Tag ya existente' });
+    }
+
+    const result = await query(
+      `INSERT INTO tags (tenant_id, target_type, target_id, category, value, color, source)
+       VALUES (?, 'lead', ?, ?, ?, ?, 'manual')`,
+      [req.tenantId, Number(req.params.id), category, value, color]
+    );
+
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'tag-created' }, req.tenantId);
+    res.json({ id: result.insertId, message: 'Tag agregado' });
+  } catch (err) {
+    console.error('[leads POST tag]', err);
+    res.status(500).json({ error: 'Error agregando tag' });
+  }
+});
+
+// DELETE /api/leads/:id/tags/:tagId — quitar tag manual
+router.delete('/:id/tags/:tagId', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const tags = await query(
+      `SELECT id, source FROM tags
+       WHERE id = ? AND tenant_id = ? AND target_type = 'lead' AND target_id = ?
+       LIMIT 1`,
+      [Number(req.params.tagId), req.tenantId, Number(req.params.id)]
+    );
+
+    if (!tags[0]) {
+      return res.status(404).json({ error: 'Tag no encontrado' });
+    }
+    if (tags[0].source !== 'manual') {
+      return res.status(400).json({ error: 'Solo se pueden quitar tags manuales' });
+    }
+
+    await query('DELETE FROM tags WHERE id = ? AND tenant_id = ?', [Number(req.params.tagId), req.tenantId]);
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'tag-deleted' }, req.tenantId);
+    res.json({ message: 'Tag eliminado' });
+  } catch (err) {
+    console.error('[leads DELETE tag]', err);
+    res.status(500).json({ error: 'Error eliminando tag' });
+  }
+});
+
+// PUT /api/leads/:id/agenda-link — vincular o desvincular lead con Agenda 4.0
+router.put('/:id/agenda-link', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const agendaClientId = req.body.agenda_client_id === '' || req.body.agenda_client_id == null
+      ? null
+      : Number(req.body.agenda_client_id);
+
+    await query(
+      'UPDATE leads SET agenda_client_id = ? WHERE id = ? AND tenant_id = ?',
+      [agendaClientId, Number(req.params.id), req.tenantId]
+    );
+
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'agenda-linked' }, req.tenantId);
+    res.json({ message: agendaClientId ? 'Lead vinculado con Agenda 4.0' : 'Vínculo removido' });
+  } catch (err) {
+    console.error('[leads PUT agenda-link]', err);
+    res.status(500).json({ error: 'Error actualizando vínculo con Agenda 4.0' });
   }
 });
 

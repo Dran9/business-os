@@ -36,13 +36,13 @@ app.use('/api/workshops', require('./routes/workshops'));
 app.use('/api/enrollments', require('./routes/enrollments'));
 app.use('/api/conversations', require('./routes/conversations'));
 app.use('/api/finance', require('./routes/finance'));
+app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/team', require('./routes/team'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/agenda', require('./routes/agenda'));
 // app.use('/api/playbooks', require('./routes/playbooks'));
-// app.use('/api/campaigns', require('./routes/marketing'));
 // app.use('/api/commands', require('./routes/commands'));
 // app.use('/api/settings', require('./routes/settings'));
-// app.use('/api/agenda', require('./routes/agenda-bridge'));
 
 // --- Static files (client/dist) ---
 const distPath = path.join(__dirname, '..', 'client', 'dist');

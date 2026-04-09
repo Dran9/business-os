@@ -32,7 +32,7 @@ Daniel MacLean — psicólogo en Cochabamba, Bolivia
 
 ## Proyecto hermano
 - **Agenda 4.0:** `/Users/dran/Documents/Codex openai/agenda4.0/`
-- Business OS consulta datos de Agenda vía API (finanzas, clientes)
+- Business OS consulta datos de Agenda 4.0 en modo read-only por bridge dedicado
 - Agenda NO depende de Business OS
 - Comparten: WABA (mismo WhatsApp Business Account), Google Vision, patrón de deploy
 
@@ -129,6 +129,7 @@ Cron           → followups, reminders, analysis batch
 ### 5. Marketing / Publicidad
 - Catálogo de talleres (`workshops`) como productos
 - `campaigns` con tracking de leads y conversiones
+- registro de ingresos atribuidos por campaña
 - Generador de copy con LLM (Groq/DeepSeek)
 - Futuro: Meta Graph API para posts directos
 
@@ -290,6 +291,40 @@ Cron           → followups, reminders, analysis batch
   - ver descripciones claras de roles
   - ver bitácora reciente del equipo
 - `client/src/hooks/useAuth.js` y `client/src/utils/api.js` ahora rehidratan en vivo el usuario actual si se edita su propio perfil desde Settings
+
+## Estado funcional añadido en sesión 9
+- `server/routes/marketing.js` ahora ya soporta CRUD completo de campañas y resumen:
+  - `GET /api/marketing/summary`
+  - `GET /api/marketing`
+  - `POST /api/marketing`
+  - `PUT /api/marketing/:id`
+  - `DELETE /api/marketing/:id`
+- `campaigns` ahora soporta `revenue_generated`
+- `client/src/pages/Marketing.jsx` dejó de ser placeholder:
+  - KPIs de inversión, ingresos atribuidos, resultado, ROI, CPL y CPA
+  - formulario operativo de campañas
+  - filtros por estado, plataforma y búsqueda
+  - tabla de campañas con edición y borrado
+  - resumen por plataforma
+- `server/services/agendaBridge.js` crea un bridge read-only con Agenda 4.0:
+  - puede tomar config desde env vars `AGENDA_DB_*`
+  - si no existe, intenta leer `/Users/dran/Documents/Codex openai/agenda4.0/.env`
+  - busca clientes, citas y pagos
+- `server/routes/agenda.js` expone:
+  - `GET /api/agenda/status`
+  - `GET /api/agenda/search`
+  - `GET /api/agenda/lead/:leadId`
+- `server/routes/leads.js` ahora soporta CRM más serio:
+  - quick views por `view=hot|followup|converted|agenda_pending`
+  - `POST /api/leads/:id/tags` para tags manuales
+  - `DELETE /api/leads/:id/tags/:tagId` para quitar tags manuales
+  - `PUT /api/leads/:id/agenda-link` para vincular o desvincular con Agenda 4.0
+- `client/src/pages/Leads.jsx` ahora suma:
+  - vistas rápidas
+  - tags manuales editables
+  - panel de cruce con Agenda 4.0
+  - búsqueda y vinculación manual de cliente de Agenda
+  - resumen de citas y pagos del cliente vinculado
 
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar

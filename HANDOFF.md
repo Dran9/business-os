@@ -947,3 +947,109 @@ Se fortaleció el módulo de equipo. Ahora la app permite editar usuarios existe
 - `node --check server/routes/team.js`: OK
 - `node --check server/services/activityLog.js`: OK
 - `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 9 (completada)
+
+### Resumen
+Se completaron los puntos 5, 6 y 7 del roadmap inmediato: el CRM de leads ahora es más serio y operable, Marketing dejó de ser placeholder y ya sirve para registrar campañas con KPIs reales, y se añadió un bridge práctico con `agenda4.0` para consultar clientes, citas y pagos sin mezclar bases de datos.
+
+### Lo implementado en esta sesión
+1. **CRM de leads fortalecido**
+   - `server/routes/leads.js` ahora soporta:
+     - `view=hot`
+     - `view=followup`
+     - `view=converted`
+     - `view=agenda_pending`
+   - También agrega:
+     - `POST /api/leads/:id/tags`
+     - `DELETE /api/leads/:id/tags/:tagId`
+     - `PUT /api/leads/:id/agenda-link`
+   - Las vistas rápidas permiten enfocar leads calientes, dormidos para follow-up, convertidos y los que aún no tienen vínculo con Agenda
+
+2. **Leads.jsx más CRM real**
+   - `client/src/pages/Leads.jsx` ahora tiene:
+     - chips de vistas rápidas
+     - creación de tags manuales
+     - borrado de tags manuales
+     - panel de cruce con Agenda 4.0
+     - búsqueda manual de cliente en Agenda
+     - vinculación/desvinculación de lead con cliente de Agenda
+     - resumen de últimas citas y pagos del cliente vinculado
+   - La ficha sigue mostrando timeline, conversaciones, inscripciones e ingresos del lead
+
+3. **Marketing funcional**
+   - Nuevo archivo backend real: `server/routes/marketing.js`
+   - Endpoints:
+     - `GET /api/marketing/summary`
+     - `GET /api/marketing`
+     - `POST /api/marketing`
+     - `PUT /api/marketing/:id`
+     - `DELETE /api/marketing/:id`
+   - `campaigns` ahora incluye `revenue_generated`
+   - `client/src/pages/Marketing.jsx` ahora permite:
+     - registrar campañas
+     - editar campañas
+     - eliminar campañas
+     - filtrar por estado, plataforma y búsqueda
+     - ver KPIs de inversión, ingresos atribuidos, ROI, CPL y CPA
+     - ver resumen por plataforma
+
+4. **Bridge con Agenda 4.0**
+   - Nuevo servicio: `server/services/agendaBridge.js`
+   - Hace conexión read-only a la DB de `agenda4.0`
+   - Toma configuración desde:
+     - `AGENDA_DB_HOST`, `AGENDA_DB_PORT`, `AGENDA_DB_USER`, `AGENDA_DB_PASSWORD`, `AGENDA_DB_NAME`
+     - o fallback local leyendo `/Users/dran/Documents/Codex openai/agenda4.0/.env`
+   - Nuevo route file: `server/routes/agenda.js`
+   - Endpoints:
+     - `GET /api/agenda/status`
+     - `GET /api/agenda/search`
+     - `GET /api/agenda/lead/:leadId`
+   - Devuelve:
+     - cliente de Agenda
+     - últimas citas
+     - últimos pagos
+     - coincidencias por nombre/teléfono si no hay vínculo explícito
+
+5. **Estilos y UX**
+   - `client/src/index.css` ahora incluye estilos para:
+     - quick views
+     - forms de tags
+     - paneles de Agenda
+     - layout de Marketing
+   - El frontend se mantiene responsive en móvil y desktop
+
+### Archivos creados/modificados en sesión 9
+- `server/db.js`
+- `server/index.js`
+- `server/routes/leads.js`
+- `server/routes/marketing.js`
+- `server/routes/agenda.js`
+- `server/services/agendaBridge.js`
+- `client/src/pages/Leads.jsx`
+- `client/src/pages/Marketing.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Notas importantes
+- El bridge con Agenda es **read-only**. No escribe nada en `agenda4.0`.
+- El vínculo lead ↔ agenda se hace guardando `leads.agenda_client_id` en Business OS.
+- No se implementó sync bidireccional ni creación automática de clientes en Agenda. Eso sigue siendo una decisión futura, no un default.
+- `node --check` no sirve para `.jsx` con la versión actual de Node del entorno; el validador real del frontend fue `vite build`.
+
+### Pendientes siguientes con más sentido
+- 6. `Marketing.jsx` ya quedó funcional; lo siguiente lógico es enriquecer insights de marketing y atribución
+- 7. El bridge con Agenda ya existe; el siguiente paso razonable es decidir si habrá acciones manuales de “crear en Agenda” o solo consulta/vinculación
+- Extender `activity_log` a campañas, leads, pagos y vínculos con Agenda
+- Evaluar si `assigned_to` merece migrarse a FK real más adelante
+
+### Verificación hecha
+- `node --check server/routes/leads.js`: OK
+- `node --check server/routes/marketing.js`: OK
+- `node --check server/routes/agenda.js`: OK
+- `node --check server/services/agendaBridge.js`: OK
+- `cd client && npm run build`: OK

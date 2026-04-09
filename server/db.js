@@ -394,6 +394,7 @@ async function initializeDatabase() {
         spent DECIMAL(10,2) DEFAULT 0,
         leads_generated INT DEFAULT 0,
         conversions INT DEFAULT 0,
+        revenue_generated DECIMAL(10,2) DEFAULT 0,
         copy_text TEXT,
         image_url TEXT,
         meta_post_id VARCHAR(100),
@@ -508,6 +509,7 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS inbox_state VARCHAR(20) DEFAULT "open"').catch(() => {});
     await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS internal_notes TEXT').catch(() => {});
     await conn.execute('UPDATE conversations SET inbox_state = "open" WHERE inbox_state IS NULL OR inbox_state = ""').catch(() => {});
+    await conn.execute('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS revenue_generated DECIMAL(10,2) DEFAULT 0').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_requested_at DATETIME').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS verified_at DATETIME').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof MEDIUMBLOB').catch(() => {});

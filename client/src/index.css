@@ -896,6 +896,55 @@ body {
   border: 1px solid var(--color-border);
 }
 
+.quick-filter-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.view-chip {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-full);
+  padding: 8px 14px;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.view-chip.active,
+.view-chip:hover {
+  background: var(--color-accent-light);
+  color: var(--color-primary);
+  border-color: transparent;
+}
+
+.tag-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.tag-form {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.removable-tag {
+  gap: 6px;
+  padding-right: 6px;
+}
+
+.tag-remove-btn {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+}
+
 .lead-mini-lists {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -958,6 +1007,44 @@ body {
   background: var(--color-surface-hover);
 }
 
+.agenda-grid,
+.marketing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.agenda-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.match-list,
+.platform-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.match-row,
+.platform-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+}
+
+.marketing-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
 @media (max-width: 768px) {
   .conversations-layout {
     grid-template-columns: 1fr;
@@ -982,7 +1069,11 @@ body {
   }
 
   .crm-layout,
-  .lead-mini-lists {
+  .lead-mini-lists,
+  .agenda-grid,
+  .marketing-grid,
+  .tag-form,
+  .agenda-search-row {
     grid-template-columns: 1fr;
   }
 }

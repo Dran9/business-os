@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
-import { apiGet } from '../utils/api'
+import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency, formatDate, timeAgo } from '../utils/dates'
 
@@ -33,20 +33,45 @@ const TAG_CLASSES = {
   custom: 'tag tag-custom',
 }
 
+const VIEW_OPTIONS = [
+  { value: '', label: 'Todos' },
+  { value: 'hot', label: 'Calientes' },
+  { value: 'followup', label: 'Sin respuesta 48h' },
+  { value: 'converted', label: 'Convertidos' },
+  { value: 'agenda_pending', label: 'Sin vínculo Agenda' },
+]
+
+const TAG_CATEGORIES = [
+  { value: 'custom', label: 'Custom' },
+  { value: 'stage', label: 'Etapa' },
+  { value: 'behavior', label: 'Comportamiento' },
+  { value: 'objection', label: 'Objeción' },
+  { value: 'quality', label: 'Calidad' },
+]
+
 export default function Leads() {
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [filter, setFilter] = useState('')
+  const [view, setView] = useState('')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState(null)
   const [selectedLead, setSelectedLead] = useState(null)
+  const [agendaBundle, setAgendaBundle] = useState(null)
+  const [agendaLoading, setAgendaLoading] = useState(false)
+  const [agendaSearch, setAgendaSearch] = useState('')
+  const [agendaMatches, setAgendaMatches] = useState([])
+  const [agendaSearchLoading, setAgendaSearchLoading] = useState(false)
+  const [savingTag, setSavingTag] = useState(false)
+  const [tagDraft, setTagDraft] = useState({ category: 'custom', value: '' })
   const deferredSearch = useDeferredValue(search)
 
   const load = useCallback(() => {
     setLoading(true)
     let url = '/api/leads?limit=100'
     if (filter) url += `&status=${filter}`
+    if (view) url += `&view=${view}`
     if (deferredSearch) url += `&search=${encodeURIComponent(deferredSearch)}`
     apiGet(url)
       .then((response) => {
@@ -56,7 +81,7 @@ export default function Leads() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [deferredSearch, filter])
+  }, [deferredSearch, filter, view])
 
   const loadLeadDetail = useCallback((leadId) => {
     if (!leadId) {
@@ -68,10 +93,34 @@ export default function Leads() {
       .then((lead) => {
         startTransition(() => {
           setSelectedLead(lead)
+          setAgendaSearch(lead.phone || lead.name || '')
         })
       })
       .catch(() => setSelectedLead(null))
       .finally(() => setLoadingDetail(false))
+  }, [])
+
+  const loadAgendaBundle = useCallback((leadId) => {
+    if (!leadId) {
+      setAgendaBundle(null)
+      setAgendaMatches([])
+      return Promise.resolve()
+    }
+    setAgendaLoading(true)
+    return apiGet(`/api/agenda/lead/${leadId}`)
+      .then((bundle) => {
+        startTransition(() => {
+          setAgendaBundle(bundle)
+          setAgendaMatches(bundle.matches || [])
+        })
+      })
+      .catch((err) => {
+        startTransition(() => {
+          setAgendaBundle({ configured: false, error: err.message })
+          setAgendaMatches([])
+        })
+      })
+      .finally(() => setAgendaLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -88,13 +137,15 @@ export default function Leads() {
 
   useEffect(() => {
     loadLeadDetail(selectedId)
-  }, [loadLeadDetail, selectedId])
+    loadAgendaBundle(selectedId)
+  }, [loadAgendaBundle, loadLeadDetail, selectedId])
 
   const { connected } = useAdminEvents({
     'lead:change': (payload) => {
       load()
       if (payload?.id && payload.id === selectedId) {
         loadLeadDetail(selectedId)
+        loadAgendaBundle(selectedId)
       }
     },
     'conversation:change': () => {
@@ -120,6 +171,60 @@ export default function Leads() {
     return { income, expense }
   }, [selectedLead?.transactions])
 
+  async function handleTagSubmit(event) {
+    event.preventDefault()
+    if (!selectedId || !tagDraft.value.trim()) return
+    setSavingTag(true)
+    try {
+      await apiPost(`/api/leads/${selectedId}/tags`, {
+        category: tagDraft.category,
+        value: tagDraft.value.trim(),
+      })
+      setTagDraft((current) => ({ ...current, value: '' }))
+      await Promise.all([load(), loadLeadDetail(selectedId)])
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setSavingTag(false)
+    }
+  }
+
+  async function handleRemoveTag(tagId) {
+    if (!selectedId) return
+    if (!confirm('¿Quitar este tag manual?')) return
+    try {
+      await apiDelete(`/api/leads/${selectedId}/tags/${tagId}`)
+      await Promise.all([load(), loadLeadDetail(selectedId)])
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  async function handleAgendaSearch(event) {
+    event?.preventDefault?.()
+    const query = agendaSearch.trim()
+    if (!query) return
+    setAgendaSearchLoading(true)
+    try {
+      const results = await apiGet(`/api/agenda/search?query=${encodeURIComponent(query)}`)
+      setAgendaMatches(results || [])
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setAgendaSearchLoading(false)
+    }
+  }
+
+  async function handleAgendaLink(agendaClientId) {
+    if (!selectedId) return
+    try {
+      await apiPut(`/api/leads/${selectedId}/agenda-link`, { agenda_client_id: agendaClientId })
+      await Promise.all([load(), loadLeadDetail(selectedId), loadAgendaBundle(selectedId)])
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
@@ -141,6 +246,19 @@ export default function Leads() {
           <option value="">Todos los estados</option>
           {Object.entries(STATUS_LABELS).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
         </select>
+      </div>
+
+      <div className="quick-filter-row mt-4">
+        {VIEW_OPTIONS.map((option) => (
+          <button
+            key={option.value || 'all'}
+            type="button"
+            className={`view-chip ${view === option.value ? 'active' : ''}`}
+            onClick={() => setView(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
 
       {loading ? (
@@ -208,15 +326,48 @@ export default function Leads() {
                     <LeadMeta label="Ingresos" value={formatCurrency(totals.income)} />
                     <LeadMeta label="Inscripciones" value={String(selectedLead.enrollments?.length || 0)} />
                   </div>
-                  {selectedLead.tags?.length > 0 && (
-                    <div className="flex gap-1 mt-4" style={{ flexWrap: 'wrap' }}>
-                      {selectedLead.tags.map((tag) => (
-                        <span key={tag.id} className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>
-                          {tag.value}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <div className="tag-section mt-4">
+                    <div className="text-sm font-semibold">Tags</div>
+                    {selectedLead.tags?.length > 0 ? (
+                      <div className="flex gap-1 mt-2" style={{ flexWrap: 'wrap' }}>
+                        {selectedLead.tags.map((tag) => (
+                          <span key={tag.id} className={`${TAG_CLASSES[tag.category] || 'tag tag-custom'} removable-tag`}>
+                            {tag.value}
+                            {tag.source === 'manual' && (
+                              <button
+                                type="button"
+                                className="tag-remove-btn"
+                                onClick={() => handleRemoveTag(tag.id)}
+                                aria-label={`Quitar tag ${tag.value}`}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-muted mt-2">Sin tags todavía.</div>
+                    )}
+                    <form className="tag-form mt-4" onSubmit={handleTagSubmit}>
+                      <select
+                        className="input"
+                        value={tagDraft.category}
+                        onChange={(event) => setTagDraft((current) => ({ ...current, category: event.target.value }))}
+                      >
+                        {TAG_CATEGORIES.map((category) => <option key={category.value} value={category.value}>{category.label}</option>)}
+                      </select>
+                      <input
+                        className="input"
+                        placeholder="Nuevo tag manual"
+                        value={tagDraft.value}
+                        onChange={(event) => setTagDraft((current) => ({ ...current, value: event.target.value }))}
+                      />
+                      <button type="submit" className="btn btn-secondary" disabled={savingTag}>
+                        {savingTag ? 'Guardando...' : 'Agregar tag'}
+                      </button>
+                    </form>
+                  </div>
                   <div className="mt-4">
                     <div className="text-sm font-semibold">Notas</div>
                     <div className="text-sm text-secondary mt-1">{selectedLead.notes || 'Sin notas todavía.'}</div>
@@ -247,6 +398,104 @@ export default function Leads() {
                       ))}
                     </div>
                   </div>
+                </div>
+
+                <div className="card mt-4">
+                  <div className="card-header">
+                    <div>
+                      <h2 className="card-title">Cruce con Agenda 4.0</h2>
+                      <div className="text-sm text-muted">Cliente de terapia, sesiones y pagos vinculados</div>
+                    </div>
+                    {selectedLead.agenda_client_id ? (
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAgendaLink(null)}>
+                        Quitar vínculo
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {agendaLoading ? (
+                    <div className="text-muted">Consultando Agenda 4.0...</div>
+                  ) : !agendaBundle?.configured ? (
+                    <div className="text-muted">Bridge con Agenda 4.0 no configurado en esta instalación.</div>
+                  ) : (
+                    <>
+                      {agendaBundle.client ? (
+                        <>
+                          <div className="lead-summary-grid">
+                            <LeadMeta label="Cliente Agenda" value={formatAgendaName(agendaBundle.client)} />
+                            <LeadMeta label="Teléfono" value={agendaBundle.client.phone || '—'} />
+                            <LeadMeta label="Ciudad" value={agendaBundle.client.city || '—'} />
+                            <LeadMeta label="Fee" value={agendaBundle.client.fee ? formatCurrency(agendaBundle.client.fee) : '—'} />
+                          </div>
+                          {!selectedLead.agenda_client_id && (
+                            <button
+                              type="button"
+                              className="btn btn-primary mt-4"
+                              onClick={() => handleAgendaLink(agendaBundle.client.id)}
+                            >
+                              Vincular este lead con Agenda
+                            </button>
+                          )}
+                          <div className="agenda-grid mt-4">
+                            <div>
+                              <div className="text-sm font-semibold">Últimas citas</div>
+                              {!agendaBundle.appointments?.length ? (
+                                <div className="text-sm text-muted mt-2">Sin citas registradas.</div>
+                              ) : agendaBundle.appointments.map((appointment) => (
+                                <div key={appointment.id} className="mini-list-row">
+                                  <span>{formatAgendaAppointment(appointment)}</span>
+                                  <span className="text-muted">{appointment.status}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div>
+                              <div className="text-sm font-semibold">Últimos pagos</div>
+                              {!agendaBundle.payments?.length ? (
+                                <div className="text-sm text-muted mt-2">Sin pagos registrados.</div>
+                              ) : agendaBundle.payments.map((payment) => (
+                                <div key={payment.id} className="mini-list-row">
+                                  <span>{formatCurrency(payment.amount || 0)}</span>
+                                  <span className="text-muted">{payment.status || 'pendiente'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-sm text-muted">No se encontró cliente vinculado en Agenda 4.0.</div>
+                      )}
+
+                      <form className="agenda-search-row mt-4" onSubmit={handleAgendaSearch}>
+                        <input
+                          className="input"
+                          placeholder="Buscar cliente en Agenda por nombre o teléfono"
+                          value={agendaSearch}
+                          onChange={(event) => setAgendaSearch(event.target.value)}
+                        />
+                        <button type="submit" className="btn btn-secondary" disabled={agendaSearchLoading}>
+                          {agendaSearchLoading ? 'Buscando...' : 'Buscar coincidencias'}
+                        </button>
+                      </form>
+
+                      {agendaMatches.length > 0 && (
+                        <div className="match-list mt-4">
+                          {agendaMatches.map((match) => (
+                            <div key={match.id} className="match-row">
+                              <div>
+                                <div className="font-semibold">{formatAgendaName(match)}</div>
+                                <div className="text-sm text-muted">
+                                  {match.phone || 'Sin teléfono'}{match.city ? ` · ${match.city}` : ''}
+                                </div>
+                              </div>
+                              <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleAgendaLink(match.id)}>
+                                Vincular
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 <div className="card mt-4">
@@ -304,6 +553,20 @@ function formatEnrollmentStatus(enrollment) {
   if (enrollment.payment_status === 'paid' || enrollment.status === 'confirmed') return 'Confirmado'
   if (enrollment.payment_status === 'unpaid') return 'Pendiente de pago'
   return enrollment.status || 'Pendiente'
+}
+
+function formatAgendaName(client) {
+  const fullName = `${client.first_name || ''} ${client.last_name || ''}`.trim()
+  return fullName || 'Sin nombre'
+}
+
+function formatAgendaAppointment(appointment) {
+  const date = new Date(appointment.date_time)
+  return `${formatDate(date)} · ${date.toLocaleTimeString('es-BO', {
+    timeZone: 'America/La_Paz',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
 }
 
 function timelineTitle(item) {

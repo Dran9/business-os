@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { timeAgo } from '../utils/dates'
@@ -28,6 +29,7 @@ const TAG_CLASSES = {
 }
 
 export default function Conversations() {
+  const [searchParams] = useSearchParams()
   const [conversations, setConversations] = useState([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
@@ -45,6 +47,7 @@ export default function Conversations() {
   const deferredSearch = useDeferredValue(search)
   const conversationsListRef = useRef(null)
   const messagesRef = useRef(null)
+  const requestedConversationId = Number(searchParams.get('conversationId') || 0) || null
 
   const selected = useMemo(
     () => conversations.find((item) => item.id === selectedId) || null,
@@ -104,6 +107,11 @@ export default function Conversations() {
   }, [])
 
   useEffect(() => {
+    if (requestedConversationId && conversations.some((item) => item.id === requestedConversationId) && selectedId !== requestedConversationId) {
+      setSelectedId(requestedConversationId)
+      return
+    }
+
     if (!selectedId && conversations.length > 0) {
       setSelectedId(conversations[0].id)
       return
@@ -112,7 +120,7 @@ export default function Conversations() {
     if (selectedId && !conversations.some((item) => item.id === selectedId)) {
       setSelectedId(conversations[0]?.id || null)
     }
-  }, [conversations, selectedId])
+  }, [conversations, requestedConversationId, selectedId])
 
   useEffect(() => {
     if (!selectedId) {

@@ -69,6 +69,190 @@ async function queryPaginated(sql, params = [], { page = 1, limit = 50 } = {}) {
   };
 }
 
+const INITIAL_FLOW_NODES = [
+  {
+    node_key: 'nodo_01',
+    name: 'Bienvenida',
+    type: 'message',
+    message_text: 'Hola, soy el asistente de Daniel MacLean. Él trabaja con grupos pequeños y cupos muy limitados, así que antes de pasarte los detalles quiero hacerte una pregunta importante:',
+    next_node_key: 'nodo_02',
+    position: 0,
+  },
+  {
+    node_key: 'nodo_02',
+    name: 'Pregunta inicial',
+    type: 'open_question_ai',
+    message_text: '¿Qué es lo que más te gustaría entender o destrabar en este momento de tu vida?',
+    ai_system_prompt: 'Eres el asistente de Daniel MacLean, terapeuta especializado en constelaciones familiares con más de 25 años de experiencia. Tu tono es cálido, directo y sin jerga de coach o marketing. Cuando el lead responde, haz un reflejo empático breve de lo que dijo (1-2 oraciones máximo, sin minimizar ni exagerar) y luego haz UNA sola pregunta de profundización genuina. Nunca prometas resultados. Nunca uses frases como "por supuesto", "absolutamente", "sin duda". Habla como una persona real.',
+    next_node_key: 'nodo_03',
+    position: 10,
+  },
+  {
+    node_key: 'nodo_03',
+    name: '¿Hace terapia?',
+    type: 'options',
+    message_text: 'Una pregunta importante antes de continuar: ¿estás haciendo algún tipo de terapia o acompañamiento profesional en este momento?',
+    options: [
+      { label: 'Sí, estoy en terapia', next_node_key: 'nodo_04a' },
+      { label: 'No, no hago terapia', next_node_key: 'nodo_04b' },
+    ],
+    position: 20,
+  },
+  {
+    node_key: 'nodo_04a',
+    name: 'Tipo de terapia',
+    type: 'open_question_detect',
+    message_text: '¿Con qué tipo de profesional trabajas?',
+    keywords: ['psiquiatra', 'psiquiatría', 'medicación', 'medicamento', 'TCA', 'esquizofrenia', 'trastorno', 'hospitalización', 'internación', 'depresión severa', 'crisis'],
+    keyword_match_next: 'nodo_05_limite',
+    keyword_nomatch_next: 'nodo_06_presentacion',
+    position: 30,
+  },
+  {
+    node_key: 'nodo_04b',
+    name: 'Sin terapia → presentación',
+    type: 'message',
+    message_text: 'Entendido. El taller puede ser un muy buen punto de partida. Te cuento los detalles:',
+    next_node_key: 'nodo_06_presentacion',
+    position: 40,
+  },
+  {
+    node_key: 'nodo_05_limite',
+    name: 'Límite clínico',
+    type: 'message',
+    message_text: 'Gracias por contarme eso. Daniel trabaja de manera complementaria a la terapia, no como reemplazo. En tu situación lo más honesto es que primero fortalezcas ese proceso individual. ¿Te gustaría que Daniel te contacte personalmente para orientarte mejor?',
+    next_node_key: 'nodo_escalacion',
+    position: 50,
+  },
+  {
+    node_key: 'nodo_06_presentacion',
+    name: 'Presentación del taller',
+    type: 'message',
+    message_text: 'El próximo taller es el [FECHA] en [VENUE], de [HORA_INICIO] a [HORA_FIN].\n\nTienes dos formas de vivir la experiencia:\n\n🔹 *Participar* — 150 Bs.\nEres representante y testigo. Ideal si es tu primera vez o quieres conocer el método.\n\n🔸 *Constelar* — 250 Bs.\nTrabajas tu caso propio. Solo 7 cupos disponibles.\n\n¿Cuál resuena más contigo?',
+    next_node_key: 'nodo_07_eleccion',
+    position: 60,
+  },
+  {
+    node_key: 'nodo_07_eleccion',
+    name: 'Elección de modalidad',
+    type: 'options',
+    message_text: '¿Qué opción eliges?',
+    options: [
+      { label: 'Participar — 150 Bs', next_node_key: 'nodo_08_qr_participante' },
+      { label: 'Constelar — 250 Bs', next_node_key: 'nodo_08_verificar_cupos' },
+    ],
+    position: 70,
+  },
+  {
+    node_key: 'nodo_08_verificar_cupos',
+    name: 'Verificar cupos constelar',
+    type: 'action',
+    action_type: 'check_workshop_capacity',
+    next_node_key: 'nodo_09_qr_constelar',
+    position: 80,
+  },
+  {
+    node_key: 'nodo_09_sin_cupos',
+    name: 'Sin cupos para constelar',
+    type: 'message',
+    message_text: 'Los cupos para constelar están completos para este taller. Pero aún hay lugar como participante, que también es una experiencia muy poderosa. ¿Quieres reservar tu lugar de esa manera?',
+    next_node_key: 'nodo_07_eleccion',
+    position: 90,
+  },
+  {
+    node_key: 'nodo_09_qr_constelar',
+    name: 'Enviar QR constelar',
+    type: 'action',
+    action_type: 'send_qr',
+    next_node_key: 'nodo_10_espera_pago',
+    position: 100,
+  },
+  {
+    node_key: 'nodo_08_qr_participante',
+    name: 'Enviar QR participante',
+    type: 'action',
+    action_type: 'send_qr',
+    next_node_key: 'nodo_10_espera_pago',
+    position: 110,
+  },
+  {
+    node_key: 'nodo_10_espera_pago',
+    name: 'Espera comprobante',
+    type: 'open_question_detect',
+    message_text: 'Cuando hayas realizado la transferencia, mándame la foto del comprobante y quedo confirmado tu lugar.',
+    keywords: ['foto', 'imagen', 'comprobante', 'pago', 'transferencia'],
+    keyword_match_next: 'nodo_11_ocr',
+    keyword_nomatch_next: 'nodo_10_espera_pago',
+    position: 120,
+  },
+  {
+    node_key: 'nodo_11_ocr',
+    name: 'Procesar OCR',
+    type: 'action',
+    action_type: 'process_payment_proof',
+    next_node_key: 'nodo_12_confirmacion',
+    position: 130,
+  },
+  {
+    node_key: 'nodo_12_confirmacion',
+    name: 'Confirmación final',
+    type: 'message',
+    message_text: '¡Listo! Tu lugar está confirmado. Daniel te contactará próximamente con los detalles finales y cualquier información que necesites antes del taller. Nos vemos pronto 🙏',
+    next_node_key: null,
+    position: 140,
+  },
+  {
+    node_key: 'nodo_escalacion',
+    name: 'Escalar a Daniel',
+    type: 'action',
+    action_type: 'escalate',
+    next_node_key: null,
+    position: 150,
+  },
+];
+
+function stringifyJsonField(value) {
+  return value == null ? null : JSON.stringify(value);
+}
+
+async function seedInitialFlowNodes(conn, tenantId) {
+  const [existing] = await conn.execute(
+    'SELECT COUNT(*) AS total FROM flow_nodes WHERE tenant_id = ?',
+    [tenantId]
+  );
+
+  if (Number(existing?.[0]?.total || 0) > 0) {
+    return;
+  }
+
+  for (const node of INITIAL_FLOW_NODES) {
+    await conn.execute(
+      `INSERT INTO flow_nodes (
+         tenant_id, node_key, name, type, message_text, ai_system_prompt, keywords,
+         options, next_node_key, keyword_match_next, keyword_nomatch_next,
+         action_type, position, active
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+      [
+        tenantId,
+        node.node_key,
+        node.name,
+        node.type,
+        node.message_text || null,
+        node.ai_system_prompt || null,
+        stringifyJsonField(node.keywords),
+        stringifyJsonField(node.options),
+        node.next_node_key || null,
+        node.keyword_match_next || null,
+        node.keyword_nomatch_next || null,
+        node.action_type || null,
+        node.position || 0,
+      ]
+    );
+  }
+
+  console.log(`[DB] Flow inicial sembrado para tenant ${tenantId}`);
+}
+
 // ============================================
 // Schema — Multi-tenant desde el día 1
 // ============================================
@@ -234,6 +418,32 @@ async function initializeDatabase() {
       )
     `);
 
+    // --- Flow nodes (Embudo dinámico) ---
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS flow_nodes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        node_key VARCHAR(50) NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        type ENUM('message', 'open_question_ai', 'open_question_detect', 'options', 'action') NOT NULL,
+        message_text TEXT,
+        ai_system_prompt TEXT,
+        keywords JSON,
+        options JSON,
+        next_node_key VARCHAR(50),
+        keyword_match_next VARCHAR(50),
+        keyword_nomatch_next VARCHAR(50),
+        action_type VARCHAR(50),
+        position INT DEFAULT 0,
+        active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_node (tenant_id, node_key),
+        KEY idx_flow_nodes_tenant_position (tenant_id, position),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+      )
+    `);
+
     // --- Conversations ---
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS conversations (
@@ -263,6 +473,26 @@ async function initializeDatabase() {
         FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
         FOREIGN KEY (playbook_id) REFERENCES playbooks(id) ON DELETE SET NULL,
         FOREIGN KEY (workshop_id) REFERENCES workshops(id) ON DELETE SET NULL
+      )
+    `);
+
+    // --- Flow sessions (tracking del embudo) ---
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS flow_sessions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        conversation_id INT NOT NULL,
+        lead_id INT,
+        current_node_key VARCHAR(50) NOT NULL,
+        context JSON,
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        status ENUM('active', 'completed', 'escalated', 'abandoned') DEFAULT 'active',
+        KEY idx_flow_sessions_conversation (conversation_id),
+        KEY idx_flow_sessions_status (tenant_id, status),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+        FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE SET NULL
       )
     `);
 
@@ -515,9 +745,14 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof MEDIUMBLOB').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof_type VARCHAR(100)').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS ocr_data JSON').catch(() => {});
+    await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
+    await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS position INT DEFAULT 0').catch(() => {});
+    await conn.execute('ALTER TABLE flow_sessions ADD COLUMN IF NOT EXISTS status ENUM("active", "completed", "escalated", "abandoned") DEFAULT "active"').catch(() => {});
     await conn.execute(
       "UPDATE admin_users SET display_name = 'Daniel' WHERE username = 'owner' AND (display_name IS NULL OR display_name = '')"
     ).catch(() => {});
+
+    await seedInitialFlowNodes(conn, 1);
 
     console.log('[DB] Schema inicializado correctamente');
   } finally {

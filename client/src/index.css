@@ -892,6 +892,118 @@ body {
   align-items: start;
 }
 
+.funnel-builder-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.funnel-node-list {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.funnel-node-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
+}
+
+.funnel-node-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.funnel-node-kicker {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.funnel-node-preview {
+  margin-top: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.funnel-branch-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.funnel-node-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.funnel-editor-panel {
+  position: sticky;
+  top: calc(var(--header-height) + var(--space-4));
+}
+
+.funnel-form-grid,
+.funnel-detect-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.funnel-keyword-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.funnel-chip-wrap {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+
+.funnel-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.funnel-option-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.funnel-toggle-row {
+  margin-bottom: var(--space-4);
+}
+
+.funnel-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.funnel-session-messages {
+  max-height: 420px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+}
+
 .crm-detail {
   min-width: 0;
 }
@@ -1085,12 +1197,21 @@ body {
   }
 
   .crm-layout,
+  .funnel-builder-layout,
   .lead-mini-lists,
   .agenda-grid,
   .marketing-grid,
   .tag-form,
-  .agenda-search-row {
+  .agenda-search-row,
+  .funnel-form-grid,
+  .funnel-detect-grid,
+  .funnel-option-row,
+  .funnel-keyword-input {
     grid-template-columns: 1fr;
+  }
+
+  .funnel-editor-panel {
+    position: static;
   }
 }
 

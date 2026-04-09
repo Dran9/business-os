@@ -35,6 +35,7 @@ app.use('/api/leads', require('./routes/leads'));
 app.use('/api/workshops', require('./routes/workshops'));
 app.use('/api/enrollments', require('./routes/enrollments'));
 app.use('/api/conversations', require('./routes/conversations'));
+app.use('/api/funnel', require('./routes/funnel'));
 app.use('/api/finance', require('./routes/finance'));
 app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/team', require('./routes/team'));

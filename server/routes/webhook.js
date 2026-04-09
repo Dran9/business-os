@@ -1,6 +1,6 @@
 const express = require('express');
 const TelegramAdapter = require('../services/channels/telegram');
-const ChatbotEngine = require('../services/chatbot/engine');
+const { processIncomingMessage } = require('../services/chatbot/flowEngine');
 
 const router = express.Router();
 
@@ -23,11 +23,8 @@ router.post('/telegram', async (req, res) => {
       return; // Update sin mensaje (edición de bot, etc.)
     }
 
-    // Ignorar comandos de bot como /start
     if (incoming.text === '/start') {
-      await adapter.sendText(incoming.senderId,
-        'Hola! Soy el asistente de Daniel MacLean. ¿En qué puedo ayudarte?');
-      return;
+      incoming.text = '';
     }
 
     // Si es callback_query, responder para quitar el loading del botón
@@ -36,8 +33,14 @@ router.post('/telegram', async (req, res) => {
     }
 
     // Procesar con el engine (tenant 1 = Daniel)
-    const engine = new ChatbotEngine(adapter, 1);
-    await engine.handleMessage(incoming);
+    await processIncomingMessage({
+      tenantId: 1,
+      incoming: {
+        ...incoming,
+        channel: adapter.channelName,
+      },
+      channelAdapter: adapter,
+    });
 
   } catch (err) {
     console.error('[webhook/telegram] Error:', err);

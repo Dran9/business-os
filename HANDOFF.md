@@ -5,6 +5,31 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 15 (completada)
+
+### Resumen
+Se hizo un ajuste visual global de tipografía: toda la escala base de fuentes del admin subió `+2px` de forma consistente en tema claro y oscuro, sin agregar funcionalidades nuevas.
+
+### Lo implementado en esta sesión
+1. **Escala tipográfica global**
+   - Archivo modificado: `client/src/index.css`
+   - Se ajustaron los tokens:
+     - `--font-size-xs`
+     - `--font-size-sm`
+     - `--font-size-base`
+     - `--font-size-lg`
+     - `--font-size-xl`
+     - `--font-size-2xl`
+     - `--font-size-3xl`
+   - El incremento real fue de `+2px` por nivel respecto a la escala anterior
+
+2. **Impacto**
+   - El cambio afecta toda la app porque los componentes usan estos tokens
+   - Aplica igual en light y dark mode
+   - No se cambió lógica, datos ni comportamiento del backend
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 13/14 (completadas)
 
 ### Resumen

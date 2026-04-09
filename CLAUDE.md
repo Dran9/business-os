@@ -404,6 +404,12 @@ Cron           → followups, reminders, analysis batch
   - `server/routes/workshops.js` crea talleres nuevos con default `planned` en vez de `draft`
   - `client/src/pages/Workshops.jsx` refleja ese default y muestra una nota aclarando que el bot/embudo solo ofrece talleres `planned` u `open`
 
+## Estado funcional añadido en sesión 15
+- Ajuste visual global de tipografía:
+  - se subieron `+2px` los tokens tipográficos base en `client/src/index.css`
+  - aplica igual a tema claro y oscuro porque ambos consumen la misma escala desde `:root`
+  - no se tocaron colores, layout estructural ni lógica
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

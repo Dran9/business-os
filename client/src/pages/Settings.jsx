@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from '../utils/api'
+import { useEffect, useMemo, useState } from 'react'
+import { apiDelete, apiGet, apiPost, apiPut, apiUpload, setStoredUser } from '../utils/api'
 
 const ROLE_LABELS = {
   owner: 'Owner',
@@ -7,8 +7,33 @@ const ROLE_LABELS = {
   viewer: 'Viewer',
 }
 
+const ROLE_DESCRIPTIONS = {
+  owner: 'Control total de equipo, configuración, cobros y decisiones sensibles.',
+  admin: 'Opera chats, CRM, cobros y equipo, pero no puede tocar owners.',
+  viewer: 'Solo consulta información operativa; no gestiona equipo ni cambios sensibles.',
+}
+
+function initialCreateForm() {
+  return {
+    username: '',
+    display_name: '',
+    pin: '',
+    role: 'viewer',
+  }
+}
+
+function initialSecurityForm() {
+  return {
+    current_pin: '',
+    new_pin: '',
+    confirm_pin: '',
+  }
+}
+
 export default function Settings({ currentUser }) {
+  const canManageTeam = ['owner', 'admin'].includes(currentUser?.role)
   const [team, setTeam] = useState([])
+  const [activity, setActivity] = useState([])
   const [paymentSettings, setPaymentSettings] = useState({
     payment_options: [
       { slot: 1, label: 'Precio 1', amount: '', active: true, has_qr: false },
@@ -21,28 +46,47 @@ export default function Settings({ currentUser }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingPayment, setSavingPayment] = useState(false)
-  const [form, setForm] = useState({
-    username: '',
-    display_name: '',
-    pin: '',
-    role: 'viewer',
-  })
+  const [savingSecurity, setSavingSecurity] = useState(false)
+  const [form, setForm] = useState(initialCreateForm())
+  const [securityForm, setSecurityForm] = useState(initialSecurityForm())
+  const [editingId, setEditingId] = useState(null)
+  const [editingForm, setEditingForm] = useState(null)
+
+  const editingMember = useMemo(
+    () => team.find((member) => member.id === editingId) || null,
+    [editingId, team]
+  )
 
   async function load() {
     setLoading(true)
     try {
-      const [rows, paymentData] = await Promise.all([
-        apiGet('/api/team').catch(() => []),
+      const requests = [
         apiGet('/api/settings/payment-options').catch(() => null),
-      ])
-      setTeam(rows)
-      if (paymentData) setPaymentSettings(paymentData)
-    } catch {
-      setTeam([])
+      ]
+      if (canManageTeam) {
+        requests.unshift(apiGet('/api/team').catch(() => []), apiGet('/api/team/activity?limit=40').catch(() => []))
+      }
+
+      const results = await Promise.all(requests)
+      if (canManageTeam) {
+        const [teamRows, activityRows, paymentData] = results
+        setTeam(teamRows)
+        setActivity(activityRows)
+        if (paymentData) setPaymentSettings(paymentData)
+      } else {
+        const [paymentData] = results
+        setTeam([])
+        setActivity([])
+        if (paymentData) setPaymentSettings(paymentData)
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    load()
+  }, [canManageTeam])
 
   async function savePaymentSettings() {
     setSavingPayment(true)
@@ -64,21 +108,77 @@ export default function Settings({ currentUser }) {
     }
   }
 
-  useEffect(() => {
-    load()
-  }, [])
-
-  async function handleSubmit(e) {
-    e.preventDefault()
+  async function handleCreateUser(event) {
+    event.preventDefault()
     setSaving(true)
     try {
       await apiPost('/api/team', form)
-      setForm({ username: '', display_name: '', pin: '', role: 'viewer' })
+      setForm(initialCreateForm())
       await load()
     } catch (err) {
       alert(err.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleChangePin(event) {
+    event.preventDefault()
+    if (securityForm.new_pin !== securityForm.confirm_pin) {
+      alert('La confirmación del PIN no coincide')
+      return
+    }
+    setSavingSecurity(true)
+    try {
+      await apiPost('/api/auth/change-pin', {
+        current_pin: securityForm.current_pin,
+        new_pin: securityForm.new_pin,
+      })
+      setSecurityForm(initialSecurityForm())
+      alert('PIN actualizado')
+      if (canManageTeam) {
+        await load()
+      }
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setSavingSecurity(false)
+    }
+  }
+
+  function beginEdit(member) {
+    setEditingId(member.id)
+    setEditingForm({
+      username: member.username,
+      display_name: member.display_name || '',
+      role: member.role,
+      active: !!member.active,
+      pin: '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditingForm(null)
+  }
+
+  async function saveEdit() {
+    if (!editingMember || !editingForm) return
+    try {
+      const response = await apiPut(`/api/team/${editingMember.id}`, {
+        username: editingForm.username,
+        display_name: editingForm.display_name,
+        role: editingForm.role,
+        active: editingForm.active,
+        pin: editingForm.pin || undefined,
+      })
+      if (editingMember.id === currentUser?.id && response?.user) {
+        setStoredUser(response.user)
+      }
+      cancelEdit()
+      await load()
+    } catch (err) {
+      alert(err.message)
     }
   }
 
@@ -88,34 +188,103 @@ export default function Settings({ currentUser }) {
 
       <div className="card mt-4">
         <div className="card-header">
-          <h2 className="card-title">Equipo interno</h2>
+          <h2 className="card-title">Seguridad personal</h2>
         </div>
-        <p className="text-muted">Usuarios internos que pueden entrar a la app y ayudar a gestionar chats y operación.</p>
+        <p className="text-muted">Cambia tu PIN sin depender de otra persona del equipo.</p>
 
-        <form onSubmit={handleSubmit} className="mt-4">
+        <form onSubmit={handleChangePin} className="mt-4">
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
             <div className="form-group">
-              <label>Username</label>
-              <input className="input" name="username" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} required />
+              <label>PIN actual</label>
+              <input
+                className="input"
+                inputMode="numeric"
+                maxLength={4}
+                value={securityForm.current_pin}
+                onChange={(event) => setSecurityForm((current) => ({ ...current, current_pin: event.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                required
+              />
             </div>
             <div className="form-group">
-              <label>Nombre visible</label>
-              <input className="input" name="display_name" value={form.display_name} onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))} />
+              <label>PIN nuevo</label>
+              <input
+                className="input"
+                inputMode="numeric"
+                maxLength={4}
+                value={securityForm.new_pin}
+                onChange={(event) => setSecurityForm((current) => ({ ...current, new_pin: event.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                required
+              />
             </div>
             <div className="form-group">
-              <label>PIN</label>
-              <input className="input" name="pin" inputMode="numeric" maxLength={4} value={form.pin} onChange={(e) => setForm((f) => ({ ...f, pin: e.target.value.replace(/\D/g, '').slice(0, 4) }))} required />
-            </div>
-            <div className="form-group">
-              <label>Rol</label>
-              <select className="input" name="role" value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
-                {Object.entries(ROLE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-              </select>
+              <label>Confirmar PIN nuevo</label>
+              <input
+                className="input"
+                inputMode="numeric"
+                maxLength={4}
+                value={securityForm.confirm_pin}
+                onChange={(event) => setSecurityForm((current) => ({ ...current, confirm_pin: event.target.value.replace(/\D/g, '').slice(0, 4) }))}
+                required
+              />
             </div>
           </div>
-          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Creando...' : 'Crear usuario'}</button>
+          <button type="submit" className="btn btn-primary" disabled={savingSecurity}>
+            {savingSecurity ? 'Actualizando...' : 'Cambiar mi PIN'}
+          </button>
         </form>
       </div>
+
+      {canManageTeam && (
+        <>
+          <div className="card mt-4">
+            <div className="card-header">
+              <h2 className="card-title">Roles y permisos</h2>
+            </div>
+            <div className="lead-mini-lists">
+              {Object.entries(ROLE_LABELS).map(([key, label]) => (
+                <div key={key} className="lead-meta-card">
+                  <div className="font-semibold">{label}</div>
+                  <div className="text-sm text-secondary mt-1">{ROLE_DESCRIPTIONS[key]}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card mt-4">
+            <div className="card-header">
+              <h2 className="card-title">Equipo interno</h2>
+            </div>
+            <p className="text-muted">Usuarios internos que pueden entrar a la app y ayudar a gestionar chats y operación.</p>
+
+            <form onSubmit={handleCreateUser} className="mt-4">
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
+                <div className="form-group">
+                  <label>Username</label>
+                  <input className="input" name="username" value={form.username} onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))} required />
+                </div>
+                <div className="form-group">
+                  <label>Nombre visible</label>
+                  <input className="input" name="display_name" value={form.display_name} onChange={(event) => setForm((current) => ({ ...current, display_name: event.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label>PIN</label>
+                  <input className="input" name="pin" inputMode="numeric" maxLength={4} value={form.pin} onChange={(event) => setForm((current) => ({ ...current, pin: event.target.value.replace(/\D/g, '').slice(0, 4) }))} required />
+                </div>
+                <div className="form-group">
+                  <label>Rol</label>
+                  <select className="input" name="role" value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value }))}>
+                    {(currentUser?.role === 'owner'
+                      ? Object.entries(ROLE_LABELS)
+                      : Object.entries(ROLE_LABELS).filter(([key]) => key !== 'owner')
+                    ).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Creando...' : 'Crear usuario'}</button>
+            </form>
+          </div>
+        </>
+      )}
 
       <div className="card mt-4">
         <div className="card-header">
@@ -131,9 +300,9 @@ export default function Settings({ currentUser }) {
                 <input
                   className="input"
                   value={option.label}
-                  onChange={(e) => setPaymentSettings((current) => ({
+                  onChange={(event) => setPaymentSettings((current) => ({
                     ...current,
-                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, label: e.target.value } : item),
+                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item),
                   }))}
                 />
               </div>
@@ -143,9 +312,9 @@ export default function Settings({ currentUser }) {
                   className="input"
                   type="number"
                   value={option.amount ?? ''}
-                  onChange={(e) => setPaymentSettings((current) => ({
+                  onChange={(event) => setPaymentSettings((current) => ({
                     ...current,
-                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, amount: e.target.value } : item),
+                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value } : item),
                   }))}
                 />
               </div>
@@ -154,9 +323,9 @@ export default function Settings({ currentUser }) {
                 <select
                   className="input"
                   value={option.active ? '1' : '0'}
-                  onChange={(e) => setPaymentSettings((current) => ({
+                  onChange={(event) => setPaymentSettings((current) => ({
                     ...current,
-                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, active: e.target.value === '1' } : item),
+                    payment_options: current.payment_options.map((item, itemIndex) => itemIndex === index ? { ...item, active: event.target.value === '1' } : item),
                   }))}
                 >
                   <option value="1">Sí</option>
@@ -169,8 +338,8 @@ export default function Settings({ currentUser }) {
                   className="input"
                   type="file"
                   accept="image/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0]
+                  onChange={async (event) => {
+                    const file = event.target.files?.[0]
                     if (!file) return
                     const formData = new FormData()
                     formData.append('file', file)
@@ -188,7 +357,7 @@ export default function Settings({ currentUser }) {
                   alt=""
                   className="mt-4"
                   style={{ width: 120, height: 120, objectFit: 'contain', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'var(--color-surface)' }}
-                  onError={(e) => { e.currentTarget.style.display = 'none' }}
+                  onError={(event) => { event.currentTarget.style.display = 'none' }}
                 />
               </div>
             </div>
@@ -198,17 +367,16 @@ export default function Settings({ currentUser }) {
         <div className="form-group mt-4">
           <label>Cuentas destino válidas para OCR</label>
           <textarea
-            className="input"
+            className="input textarea"
             rows={5}
             value={Array.isArray(paymentSettings.payment_destination_accounts) ? paymentSettings.payment_destination_accounts.join('\n') : ''}
-            onChange={(e) => setPaymentSettings((current) => ({
+            onChange={(event) => setPaymentSettings((current) => ({
               ...current,
-              payment_destination_accounts: e.target.value
+              payment_destination_accounts: event.target.value
                 .split('\n')
                 .map((item) => item.trim())
                 .filter(Boolean),
             }))}
-            style={{ resize: 'vertical' }}
             placeholder={'Una cuenta por línea\nEjemplo:\n30151182874355\n6896894011'}
           />
           <p className="text-muted text-sm mt-4">El OCR validará el comprobante solo si detecta una de estas cuentas como destino.</p>
@@ -219,71 +387,178 @@ export default function Settings({ currentUser }) {
         </button>
       </div>
 
-      <div className="table-container mt-4">
-        {loading ? (
-          <p className="text-muted">Cargando equipo...</p>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Usuario</th>
-                <th>Nombre</th>
-                <th>Rol</th>
-                <th>Estado</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {team.map((member) => (
-                <tr key={member.id}>
-                  <td className="font-semibold">{member.username}</td>
-                  <td>{member.display_name || '-'}</td>
-                  <td>{ROLE_LABELS[member.role] || member.role}</td>
-                  <td><span className={member.active ? 'badge badge-success' : 'badge badge-warning'}>{member.active ? 'Activo' : 'Inactivo'}</span></td>
-                  <td>
-                    <div className="flex gap-2">
-                      {member.id !== currentUser?.id && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={async () => {
-                            const nextActive = !member.active
-                            try {
-                              await apiPut(`/api/team/${member.id}`, { active: nextActive })
-                              load()
-                            } catch (err) {
-                              alert(err.message)
-                            }
-                          }}
-                        >
-                          {member.active ? 'Desactivar' : 'Activar'}
-                        </button>
-                      )}
-                      {member.id !== currentUser?.id && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={async () => {
-                            if (!confirm(`¿Eliminar a ${member.username}?`)) return
-                            try {
-                              await apiDelete(`/api/team/${member.id}`)
-                              load()
-                            } catch (err) {
-                              alert(err.message)
-                            }
-                          }}
-                        >
-                          Eliminar
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      {canManageTeam && (
+        <>
+          <div className="card mt-4">
+            <div className="card-header">
+              <h2 className="card-title">Usuarios del equipo</h2>
+            </div>
+            <div className="table-container">
+              {loading ? (
+                <p className="text-muted">Cargando equipo...</p>
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Usuario</th>
+                      <th>Nombre</th>
+                      <th>Rol</th>
+                      <th>Estado</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {team.map((member) => (
+                      <tr key={member.id}>
+                        <td className="font-semibold">
+                          {member.username}
+                          {member.id === currentUser?.id ? <span className="text-xs text-muted"> · Tú</span> : null}
+                        </td>
+                        <td>{member.display_name || '-'}</td>
+                        <td>{ROLE_LABELS[member.role] || member.role}</td>
+                        <td><span className={member.active ? 'badge badge-success' : 'badge badge-warning'}>{member.active ? 'Activo' : 'Inactivo'}</span></td>
+                        <td>
+                          <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => beginEdit(member)}>
+                              Editar
+                            </button>
+                            {member.id !== currentUser?.id && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={async () => {
+                                  try {
+                                    await apiPut(`/api/team/${member.id}`, { active: !member.active })
+                                    await load()
+                                  } catch (err) {
+                                    alert(err.message)
+                                  }
+                                }}
+                              >
+                                {member.active ? 'Desactivar' : 'Activar'}
+                              </button>
+                            )}
+                            {member.id !== currentUser?.id && (
+                              <button
+                                type="button"
+                                className="btn btn-ghost btn-sm"
+                                onClick={async () => {
+                                  if (!confirm(`¿Eliminar a ${member.username}?`)) return
+                                  try {
+                                    await apiDelete(`/api/team/${member.id}`)
+                                    await load()
+                                  } catch (err) {
+                                    alert(err.message)
+                                  }
+                                }}
+                              >
+                                Eliminar
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {editingMember && editingForm && (
+            <div className="card mt-4">
+              <div className="card-header">
+                <h2 className="card-title">Editar usuario</h2>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-4)' }}>
+                <div className="form-group">
+                  <label>Username</label>
+                  <input className="input" value={editingForm.username} onChange={(event) => setEditingForm((current) => ({ ...current, username: event.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label>Nombre visible</label>
+                  <input className="input" value={editingForm.display_name} onChange={(event) => setEditingForm((current) => ({ ...current, display_name: event.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label>Rol</label>
+                  <select className="input" value={editingForm.role} onChange={(event) => setEditingForm((current) => ({ ...current, role: event.target.value }))}>
+                    {(currentUser?.role === 'owner'
+                      ? Object.entries(ROLE_LABELS)
+                      : Object.entries(ROLE_LABELS).filter(([key]) => key !== 'owner')
+                    ).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Estado</label>
+                  <select className="input" value={editingForm.active ? '1' : '0'} onChange={(event) => setEditingForm((current) => ({ ...current, active: event.target.value === '1' }))}>
+                    <option value="1">Activo</option>
+                    <option value="0">Inactivo</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Nuevo PIN</label>
+                  <input className="input" inputMode="numeric" maxLength={4} placeholder="Opcional" value={editingForm.pin} onChange={(event) => setEditingForm((current) => ({ ...current, pin: event.target.value.replace(/\D/g, '').slice(0, 4) }))} />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="btn btn-primary" onClick={saveEdit}>Guardar cambios</button>
+                <button type="button" className="btn btn-secondary" onClick={cancelEdit}>Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          <div className="card mt-4">
+            <div className="card-header">
+              <h2 className="card-title">Bitácora del equipo</h2>
+            </div>
+            <div className="table-container">
+              {activity.length === 0 ? (
+                <p className="text-muted">Todavía no hay cambios registrados del equipo.</p>
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Actor</th>
+                      <th>Acción</th>
+                      <th>Detalle</th>
+                      <th>Fecha</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activity.map((item) => (
+                      <tr key={item.id}>
+                        <td className="font-semibold">{item.actor}</td>
+                        <td>{formatAction(item.action)}</td>
+                        <td className="text-secondary">{formatDetails(item.details)}</td>
+                        <td className="text-muted text-sm">{new Date(item.created_at).toLocaleString('es-BO', { timeZone: 'America/La_Paz' })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
+}
+
+function formatAction(action) {
+  if (action === 'team.user.create') return 'Creó usuario'
+  if (action === 'team.user.update') return 'Actualizó usuario'
+  if (action === 'team.user.delete') return 'Eliminó usuario'
+  if (action === 'team.change_pin.self') return 'Cambió su PIN'
+  return action
+}
+
+function formatDetails(details) {
+  if (!details) return '—'
+  if (details.username && typeof details.username === 'string') return details.username
+  if (details.username?.to) return `${details.username.from} → ${details.username.to}`
+  if (details.role?.to) return `Rol: ${details.role.from} → ${details.role.to}`
+  if (details.display_name?.to) return `Nombre: ${details.display_name.to || 'sin nombre'}`
+  if (details.pin_reset) return 'Reset de PIN'
+  if (details.active) return `Activo: ${details.active.to ? 'sí' : 'no'}`
+  return JSON.stringify(details)
 }

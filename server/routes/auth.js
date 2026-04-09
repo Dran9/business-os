@@ -2,6 +2,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query } = require('../db');
+const authMiddleware = require('../middleware/auth');
+const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
 
@@ -95,6 +97,60 @@ router.get('/me', async (req, res) => {
     res.json({ user: users[0] });
   } catch (err) {
     res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+});
+
+router.post('/change-pin', authMiddleware, async (req, res) => {
+  try {
+    const { current_pin, new_pin } = req.body;
+
+    if (!current_pin || !/^\d{4}$/.test(current_pin)) {
+      return res.status(400).json({ error: 'PIN actual inválido' });
+    }
+    if (!new_pin || !/^\d{4}$/.test(new_pin)) {
+      return res.status(400).json({ error: 'PIN nuevo inválido' });
+    }
+    if (current_pin === new_pin) {
+      return res.status(400).json({ error: 'El PIN nuevo debe ser distinto al actual' });
+    }
+
+    const users = await query(
+      `SELECT id, tenant_id, username, password_hash
+       FROM admin_users
+       WHERE id = ? AND tenant_id = ? AND active = TRUE
+       LIMIT 1`,
+      [req.user.userId, req.tenantId]
+    );
+
+    if (users.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const user = users[0];
+    const valid = await bcrypt.compare(current_pin, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'PIN actual incorrecto' });
+    }
+
+    const passwordHash = await bcrypt.hash(new_pin, 12);
+    await query(
+      'UPDATE admin_users SET password_hash = ? WHERE id = ? AND tenant_id = ?',
+      [passwordHash, user.id, req.tenantId]
+    );
+
+    await logActivity({
+      tenantId: req.tenantId,
+      actor: req.user.username || user.username,
+      action: 'team.change_pin.self',
+      targetType: 'admin_user',
+      targetId: user.id,
+      details: { username: user.username },
+    });
+
+    res.json({ message: 'PIN actualizado' });
+  } catch (err) {
+    console.error('[auth/change-pin]', err);
+    res.status(500).json({ error: 'Error actualizando PIN' });
   }
 });
 

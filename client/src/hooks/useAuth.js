@@ -17,8 +17,15 @@ export function useAuth() {
         setUser(e.newValue ? JSON.parse(e.newValue) : null)
       }
     }
+    function onUserUpdated(e) {
+      setUser(e.detail || null)
+    }
     window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+    window.addEventListener('bos-user-updated', onUserUpdated)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('bos-user-updated', onUserUpdated)
+    }
   }, [])
 
   useEffect(() => {

@@ -15,6 +15,7 @@ export function setToken(token) {
 export function clearToken() {
   localStorage.removeItem('bos_token');
   localStorage.removeItem(getUserKey());
+  window.dispatchEvent(new CustomEvent('bos-user-updated', { detail: null }));
 }
 
 export function isAuthenticated() {
@@ -23,6 +24,7 @@ export function isAuthenticated() {
 
 export function setStoredUser(user) {
   localStorage.setItem(getUserKey(), JSON.stringify(user));
+  window.dispatchEvent(new CustomEvent('bos-user-updated', { detail: user }));
 }
 
 export function getStoredUser() {

@@ -857,3 +857,93 @@ Se completaron los puntos 3 y 5 del roadmap inmediato: ahora existe una revisió
 - `node --check server/services/enrollments.js`: OK
 - `node --check server/routes/leads.js`: OK
 - `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-08 — SESIÓN 8 (completada)
+
+### Resumen
+Se fortaleció el módulo de equipo. Ahora la app permite editar usuarios existentes, cambiar el PIN propio sin depender de otro usuario, restringe mejor lo que admins y owners pueden hacer, y deja bitácora de cambios del equipo. También se resolvió un detalle importante: si el usuario actual se edita a sí mismo desde Configuración, el frontend refleja esos cambios sin tener que cerrar sesión.
+
+### Lo implementado en esta sesión
+1. **Cambio de PIN propio**
+   - `server/routes/auth.js` ahora soporta:
+     - `POST /api/auth/change-pin`
+   - Requiere:
+     - `current_pin`
+     - `new_pin`
+   - Valida que:
+     - ambos sean de 4 dígitos
+     - el actual coincida
+     - el nuevo sea distinto
+
+2. **Bitácora de acciones**
+   - Nuevo archivo: `server/services/activityLog.js`
+   - Inserta eventos en `activity_log`
+   - `server/routes/team.js` y `server/routes/auth.js` ahora registran:
+     - creación de usuario
+     - actualización de usuario
+     - eliminación de usuario
+     - cambio de PIN propio
+
+3. **Team route endurecida**
+   - `server/routes/team.js` fue rehecha con reglas de permisos más claras:
+     - solo `owner` puede crear o promover `owner`
+     - `admin` no puede editar ni borrar `owner`
+     - nadie puede desactivar su propia cuenta
+     - nadie puede eliminar su propia cuenta
+     - no se puede dejar la instalación sin al menos un `owner` activo
+   - También se añadió:
+     - `GET /api/team/activity`
+   - Y se mejoró `PUT /api/team/:id`:
+     - ahora soporta editar `username`
+     - devuelve el usuario actualizado
+     - si cambia el username, se actualiza `conversations.assigned_to`
+   - `DELETE /api/team/:id` ahora devuelve conversaciones asignadas del usuario eliminado a `bot`
+
+4. **Settings más operativa**
+   - `client/src/pages/Settings.jsx` fue ampliada para:
+     - cambiar PIN propio
+     - ver explicación de roles
+     - crear usuarios
+     - editar usuarios existentes
+     - cambiar username
+     - cambiar nombre visible
+     - cambiar rol
+     - activar/desactivar usuario
+     - resetear PIN de otro usuario
+     - ver bitácora del equipo
+   - Los viewers siguen pudiendo cambiar su PIN, pero no gestionar equipo
+
+5. **Rehidratación del usuario actual**
+   - `client/src/utils/api.js` ahora emite evento local cuando cambia `bos_user`
+   - `client/src/hooks/useAuth.js` escucha ese evento
+   - Si el usuario actual se edita a sí mismo desde Settings, el sidebar y el estado auth se actualizan sin refresh manual
+
+### Archivos creados/modificados en sesión 8
+- `server/services/activityLog.js`
+- `server/routes/auth.js`
+- `server/routes/team.js`
+- `client/src/utils/api.js`
+- `client/src/hooks/useAuth.js`
+- `client/src/pages/Settings.jsx`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Notas importantes
+- El sistema ya no depende de “borrar y recrear” usuarios para cambiarles cosas básicas.
+- `assigned_to` sigue siendo string por username; por eso en esta sesión se añadió sincronización al renombrar usuarios. A futuro, si el sistema crece, lo correcto sería migrar a `assigned_user_id`.
+- La bitácora de equipo hoy vive en `activity_log` filtrando acciones `team.%`. Todavía no es una auditoría completa de toda la app.
+
+### Pendientes siguientes con más sentido
+- Convertir `assigned_to` de string a FK real cuando valga la pena
+- Añadir edición inline de perfil propio (por ejemplo display name) si luego hace falta
+- Extender `activity_log` a otras áreas críticas: pagos, leads, campañas
+- Hacer `Marketing.jsx` funcional
+
+### Verificación hecha
+- `node --check server/routes/auth.js`: OK
+- `node --check server/routes/team.js`: OK
+- `node --check server/services/activityLog.js`: OK
+- `cd client && npm run build`: OK

@@ -272,6 +272,25 @@ Cron           → followups, reminders, analysis batch
   - `transactions`
   - `timeline`
 
+## Estado funcional añadido en sesión 8
+- Nuevo servicio `server/services/activityLog.js`
+- `server/routes/auth.js` ahora soporta `POST /api/auth/change-pin`
+- `server/routes/team.js` ahora quedó más estricto:
+  - admins no pueden gestionar owners
+  - solo owners pueden crear/promover owners
+  - no se puede desactivar o eliminar la propia cuenta
+  - no se puede dejar la instalación sin al menos un owner activo
+  - si cambia el username de un usuario, se sincroniza `conversations.assigned_to`
+  - si se elimina un usuario, sus conversaciones asignadas vuelven a `bot`
+- `client/src/pages/Settings.jsx` ahora permite:
+  - cambiar tu propio PIN
+  - editar usuarios existentes
+  - cambiar username, nombre visible, rol y estado
+  - resetear PIN de otro usuario
+  - ver descripciones claras de roles
+  - ver bitácora reciente del equipo
+- `client/src/hooks/useAuth.js` y `client/src/utils/api.js` ahora rehidratan en vivo el usuario actual si se edita su propio perfil desde Settings
+
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar
 - Acciones sobre talleres: broadcast, recordatorio, clonar

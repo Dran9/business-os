@@ -363,10 +363,10 @@ async function ensureEnrollment({ tenantId, workshopId, leadId, amountDue, modal
     `INSERT INTO enrollments (tenant_id, workshop_id, lead_id, status, amount_due, payment_status, notes)
      VALUES (?, ?, ?, 'pending', ?, 'unpaid', ?)
      ON DUPLICATE KEY UPDATE
-       status = VALUES(status),
-       amount_due = VALUES(amount_due),
-       payment_status = VALUES(payment_status),
-       notes = VALUES(notes)`,
+       status = IF(status IN ('confirmed', 'completed'), status, VALUES(status)),
+       amount_due = IF(status IN ('confirmed', 'completed'), amount_due, VALUES(amount_due)),
+       payment_status = IF(payment_status = 'paid', payment_status, VALUES(payment_status)),
+       notes = IF(status IN ('confirmed', 'completed'), notes, VALUES(notes))`,
     [tenantId, workshopId, leadId, amountDue || 0, notes]
   );
 }

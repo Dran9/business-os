@@ -28,6 +28,17 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/workshops/venues/list
+router.get('/venues/list', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const rows = await query('SELECT * FROM venues WHERE tenant_id = ? AND active = TRUE ORDER BY name', [req.tenantId]);
+    res.json(rows);
+  } catch (err) {
+    console.error('[venues GET]', err);
+    res.status(500).json({ error: 'Error' });
+  }
+});
+
 // GET /api/workshops/:id
 router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
@@ -60,8 +71,8 @@ router.post('/', authMiddleware, tenantMiddleware, async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [req.tenantId, name, type || null, modality || 'presencial',
        status || 'planned', date || null, time_start || null, time_end || null,
-       venue_id || null, max_participants || 25, price || null,
-       early_bird_price || null, early_bird_deadline || null, description || null]
+       venue_id || null, max_participants || 25, price === '' || price == null ? null : price,
+       early_bird_price === '' || early_bird_price == null ? null : early_bird_price, early_bird_deadline || null, description || null]
     );
 
     res.json({ id: result.insertId, message: 'Taller creado' });
@@ -110,17 +121,6 @@ router.delete('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
 });
 
 // --- VENUES ---
-
-// GET /api/workshops/venues/list
-router.get('/venues/list', authMiddleware, tenantMiddleware, async (req, res) => {
-  try {
-    const rows = await query('SELECT * FROM venues WHERE tenant_id = ? AND active = TRUE ORDER BY name', [req.tenantId]);
-    res.json(rows);
-  } catch (err) {
-    console.error('[venues GET]', err);
-    res.status(500).json({ error: 'Error' });
-  }
-});
 
 // POST /api/workshops/venues
 router.post('/venues', authMiddleware, tenantMiddleware, async (req, res) => {

@@ -18,7 +18,14 @@ async function tenantMiddleware(req, res, next) {
   }
 
   try {
-    const rows = await query('SELECT * FROM tenants WHERE id = ?', [tenantId]);
+    const rows = await query(
+      `SELECT id, name, brand_config, wa_config, llm_config, google_config,
+              meta_config, push_config, agenda_config, features_enabled,
+              payment_options, payment_destination_accounts,
+              created_at, updated_at
+       FROM tenants WHERE id = ?`,
+      [tenantId]
+    );
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Tenant no encontrado' });
     }

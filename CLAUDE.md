@@ -410,6 +410,17 @@ Cron           → followups, reminders, analysis batch
   - aplica igual a tema claro y oscuro porque ambos consumen la misma escala desde `:root`
   - no se tocaron colores, layout estructural ni lógica
 
+## Estado funcional añadido en sesión 16
+- Correcciones puntuales de server sobre bugs operativos:
+  - `server/services/chatbot/flowEngine.js` ya no degrada enrollments confirmados al reingresar por el embudo
+  - `server/routes/workshops.js` expone correctamente `GET /api/workshops/venues/list` antes de `/:id`
+  - `server/routes/webhook.js` y `server/services/channels/telegram.js` ahora usan `secret_token` para proteger el webhook de Telegram
+  - `server/routes/auth.js` ahora:
+    - exige seleccionar usuario si hay más de un admin activo
+    - limita intentos de login con `express-rate-limit`
+  - `server/middleware/tenant.js` ya no cachea los BLOBs de QR del tenant
+  - `server/routes/workshops.js` conserva `price: 0` y `early_bird_price: 0` en creación
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

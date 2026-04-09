@@ -1,14 +1,22 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const { query } = require('../db');
 const authMiddleware = require('../middleware/auth');
 const { logActivity } = require('../services/activityLog');
 
 const router = express.Router();
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Demasiados intentos. Espera 15 minutos.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // POST /api/auth/login — solo PIN de 4 dígitos
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { pin, username } = req.body;
 
@@ -27,6 +35,12 @@ router.post('/login', async (req, res) => {
         [username.trim()]
       );
     } else {
+      const countRows = await query(
+        'SELECT COUNT(*) as total FROM admin_users WHERE tenant_id = 1 AND active = TRUE'
+      );
+      if (countRows[0].total > 1) {
+        return res.status(400).json({ error: 'Selecciona tu usuario' });
+      }
       users = await query(
         `SELECT au.*, t.name as tenant_name
          FROM admin_users au

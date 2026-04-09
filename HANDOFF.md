@@ -5,6 +5,47 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 16 (completada)
+
+### Resumen
+Se corrigieron bugs de backend confirmados, sin refactorizar arquitectura ni agregar funcionalidades nuevas. El foco fue proteger operación real del embudo, login y webhook.
+
+### Lo implementado en esta sesión
+1. **Embudo / enrollments**
+   - `server/services/chatbot/flowEngine.js`
+   - `ensureEnrollment()` ya no pisa enrollments confirmados/pagados cuando el lead vuelve a pasar por el flujo
+
+2. **Workshops**
+   - `server/routes/workshops.js`
+   - `GET /api/workshops/venues/list` quedó movido antes de `GET /:id`
+   - crear un taller ahora conserva `price: 0` y `early_bird_price: 0` en vez de convertirlos a `null`
+
+3. **Webhook de Telegram**
+   - `server/routes/webhook.js`
+   - `server/services/channels/telegram.js`
+   - se agregó `secret_token` al `setWebhook()`
+   - el endpoint POST del webhook ahora valida `x-telegram-bot-api-secret-token`
+   - después del deploy hay que re-ejecutar:
+     - `GET /api/webhook/telegram/setup`
+
+4. **Auth**
+   - `server/routes/auth.js`
+   - se agregó `express-rate-limit` al login
+   - si hay más de un usuario activo, el login sin `username` devuelve `Selecciona tu usuario`
+   - si solo hay uno, se conserva backward compatibility
+
+5. **Tenant cache**
+   - `server/middleware/tenant.js`
+   - el middleware ya no hace `SELECT *` sobre `tenants`
+   - se excluyen los campos `payment_qr_1..4` del cache en memoria
+
+6. **Verificación**
+   - `node --check` OK en todos los archivos tocados
+   - `require('express-rate-limit')`: OK
+   - `node server/index.js` intentó arrancar pero en este workspace falló por entorno local sin MySQL escuchando en `127.0.0.1:3306`
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 15 (completada)
 
 ### Resumen

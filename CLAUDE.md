@@ -431,6 +431,12 @@ Cron           → followups, reminders, analysis batch
     - confirmación explícita cuando el guardado fue exitoso
 - `client/src/index.css` suma estilos para avisos inline en Configuración
 
+## Estado funcional añadido en sesión 18
+- Ajuste operativo sobre Telegram de pruebas:
+  - se retiró la validación obligatoria de `secret_token` del webhook en `server/routes/webhook.js`
+  - `server/services/channels/telegram.js` volvió a registrar el webhook sin `secret_token`
+  - motivo: Telegram se usa solo como canal de prueba y la validación estaba dejando el bot mudo si el webhook no se había reconfigurado
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

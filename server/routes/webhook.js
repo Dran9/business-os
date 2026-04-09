@@ -6,12 +6,6 @@ const router = express.Router();
 
 // POST /api/webhook/telegram — recibe mensajes de Telegram
 router.post('/telegram', async (req, res) => {
-  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET || 'bos_tg_webhook_secret_2026';
-  const receivedSecret = req.headers['x-telegram-bot-api-secret-token'];
-  if (receivedSecret !== expectedSecret) {
-    return res.sendStatus(403);
-  }
-
   // Responder 200 inmediatamente (Telegram reintenta si no)
   res.sendStatus(200);
 

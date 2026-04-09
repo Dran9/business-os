@@ -5,6 +5,30 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 18 (completada)
+
+### Resumen
+Se revirtió el endurecimiento del webhook de Telegram porque estaba bloqueando el canal de pruebas. El bot quedó de nuevo sin requerir `secret_token`, que en este proyecto no es prioritario porque Telegram se usa solo como sandbox antes de pasar a WhatsApp.
+
+### Lo implementado en esta sesión
+1. **Webhook Telegram simplificado**
+   - `server/routes/webhook.js`
+   - se quitó la validación de `x-telegram-bot-api-secret-token`
+
+2. **Registro de webhook simplificado**
+   - `server/services/channels/telegram.js`
+   - `setWebhook()` vuelve a registrar solo `url` y `allowed_updates`
+
+3. **Motivo**
+   - el cambio anterior podía dejar el bot sin responder si el webhook remoto no se había reconfigurado después del deploy
+   - como Telegram es solo de pruebas, se priorizó restaurar operación por encima del hardening de ese canal
+
+4. **Verificación**
+   - `node --check server/routes/webhook.js`: OK
+   - `node --check server/services/channels/telegram.js`: OK
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 17 (completada)
 
 ### Resumen

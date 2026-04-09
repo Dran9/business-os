@@ -175,15 +175,10 @@ class TelegramAdapter extends ChannelAdapter {
 
   // Configurar webhook
   async setWebhook(url) {
-    const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET || 'bos_tg_webhook_secret_2026';
     const res = await fetch(`${this.apiBase}/setWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url,
-        allowed_updates: ['message', 'callback_query'],
-        secret_token: secretToken,
-      }),
+      body: JSON.stringify({ url, allowed_updates: ['message', 'callback_query'] }),
     });
     const data = await res.json();
     console.log('[Telegram setWebhook]', data);

@@ -5,6 +5,32 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-09 — SESIÓN 21 (completada)
+
+### Resumen
+Se reconstruyó `client/dist` para que Hostinger pueda servir los cambios de frontend que ya estaban en `main`, especialmente el nuevo módulo `Contacts`. El problema no era la ruta ni el código fuente: faltaba el bundle de producción.
+
+### Lo implementado en esta sesión
+1. **Build frontend**
+   - `client/dist/index.html`
+   - `client/dist/assets/*`
+   - ahora existe bundle de:
+     - `Contacts`
+     - `ConfirmButton`
+   - también se regeneraron los bundles principales y el CSS global
+
+2. **Motivo**
+   - en este proyecto Hostinger no compila `client/src`
+   - solo sirve el contenido ya construido en `client/dist`
+   - por eso `Contacts` no aparecía aunque el código ya estaba mergeado en `main`
+
+### Verificación
+1. `npm run build` en `client/`: OK
+2. evidencia del bundle:
+   - `client/dist/assets/Contacts-*.js`
+
+---
+
 ## Estado actual: 2026-04-09 — SESIÓN 20 (completada)
 
 ### Resumen

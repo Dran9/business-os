@@ -478,6 +478,15 @@ Cron           → followups, reminders, analysis batch
   - env var de canal: `PUSHINATOR_CHANNEL_ID`
   - config tenant: `api_token`, `channel_id`
 
+## Estado funcional añadido en sesión 21
+- Se reconstruyó `client/dist/` después de las sesiones de `Contacts` y `tags`
+- Motivo:
+  - Hostinger sirve `client/dist`
+  - los cambios ya estaban en `client/src` pero todavía no estaban empaquetados en producción
+- Resultado:
+  - `Contacts` quedó visible en el bundle desplegable
+  - también entraron al build los cambios de `ConfirmButton` y navegación lateral
+
 ## Regla operativa de deploy
 - Este proyecto despliega desde `main` para Hostinger
 - No abrir branches intermedias para trabajo normal salvo pedido explícito del usuario

@@ -326,6 +326,33 @@ Cron           → followups, reminders, analysis batch
   - búsqueda y vinculación manual de cliente de Agenda
   - resumen de citas y pagos del cliente vinculado
 
+## Estado funcional añadido en sesión 10
+- `client/src/pages/Conversations.jsx` ahora hace auto-scroll al final del hilo al cargar mensajes o cambiar de conversación
+- `client/src/index.css` endurece el layout de inbox para navegadores sensibles a grid/flex:
+  - `min-height: 0` en paneles con scroll
+  - `overscroll-behavior: contain` en lista y thread
+- Verificación operativa hecha en producción:
+  - `GET /api/health` responde `200`
+  - `GET /api/conversations?limit=5` responde correctamente
+  - la conversación de Telegram seguía registrando mensajes y respuesta del bot a las `02:46` hora Bolivia del `2026-04-09`
+  - `getWebhookInfo` de Telegram reportó `pending_update_count: 0`
+- Conclusión de sesión 10:
+  - no hubo evidencia de caída del webhook
+  - el fix aplicado fue sobre robustez del módulo `Conversaciones`
+
+## Estado funcional añadido en sesión 11
+- `client/src/pages/Conversations.jsx` ahora fuerza orden descendente por `last_message_at` / `started_at`
+- la lista de conversaciones se resetea arriba al recargar para dejar siempre las más recientes al tope
+- `client/src/index.css` endurece todavía más el scroll de la lista:
+  - `height: 100%`
+  - `overflow-x: hidden`
+  - `-webkit-overflow-scrolling: touch`
+  - `touch-action: pan-y`
+  - uso de `100dvh` para altura real del panel
+- objetivo de sesión 11:
+  - corregir lista de conversaciones “trancada”
+  - asegurar que las más nuevas queden arriba y las más antiguas abajo
+
 ### 7. Comandos rápidos
 - Acciones sobre leads: follow-up, cobrar, escalar, descartar
 - Acciones sobre talleres: broadcast, recordatorio, clonar

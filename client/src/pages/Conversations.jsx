@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { timeAgo } from '../utils/dates'
@@ -43,6 +43,8 @@ export default function Conversations() {
   const [savingNote, setSavingNote] = useState(false)
   const [sendingMessage, setSendingMessage] = useState(false)
   const deferredSearch = useDeferredValue(search)
+  const conversationsListRef = useRef(null)
+  const messagesRef = useRef(null)
 
   const selected = useMemo(
     () => conversations.find((item) => item.id === selectedId) || null,
@@ -59,8 +61,13 @@ export default function Conversations() {
 
     apiGet(`/api/conversations?${params.toString()}`)
       .then((response) => {
+        const items = [...(response.data || [])].sort((a, b) => {
+          const aTime = new Date(a.last_message_at || a.started_at || 0).getTime()
+          const bTime = new Date(b.last_message_at || b.started_at || 0).getTime()
+          return bTime - aTime
+        })
         startTransition(() => {
-          setConversations(response.data || [])
+          setConversations(items)
         })
       })
       .catch(() => {})
@@ -118,6 +125,18 @@ export default function Conversations() {
   useEffect(() => {
     setNoteDraft(selected?.internal_notes || '')
   }, [selected?.id, selected?.internal_notes])
+
+  useEffect(() => {
+    const node = conversationsListRef.current
+    if (!node) return
+    node.scrollTop = 0
+  }, [conversations])
+
+  useEffect(() => {
+    const node = messagesRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [messages, selectedId])
 
   const { connected } = useAdminEvents({
     'conversation:change': (payload) => {
@@ -237,7 +256,7 @@ export default function Conversations() {
       </div>
 
       <div className="conversations-layout mt-4">
-        <div className="conversations-list">
+        <div ref={conversationsListRef} className="conversations-list">
           {loading ? (
             <p className="text-muted">Cargando...</p>
           ) : conversations.length === 0 ? (
@@ -354,7 +373,7 @@ export default function Conversations() {
                       Cargando mensajes...
                     </div>
                   ) : (
-                    <div className="chat-messages">
+                    <div ref={messagesRef} className="chat-messages">
                       {messages.map((message) => (
                         <div key={message.id} className={`chat-bubble ${message.direction === 'outbound' ? 'outbound' : 'inbound'}`}>
                           <div className="chat-bubble-content">{message.content}</div>

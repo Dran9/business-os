@@ -1053,3 +1053,117 @@ Se completaron los puntos 5, 6 y 7 del roadmap inmediato: el CRM de leads ahora 
 - `node --check server/routes/agenda.js`: OK
 - `node --check server/services/agendaBridge.js`: OK
 - `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-09 — SESIÓN 10 (completada)
+
+### Resumen
+Daniel reportó dos síntomas: el módulo `Conversaciones` se sentía roto y el bot de Telegram aparentemente no respondió. La investigación mostró que el backend en producción seguía arriba, el webhook de Telegram estaba sano y la conversación del bot seguía registrando mensajes y respuestas. El cambio aplicado fue un endurecimiento del layout/scroll del inbox para evitar que el panel de conversaciones o el thread queden “sin responder” por comportamiento de overflow en grid/flex.
+
+### Hallazgos reales de producción
+1. **Servidor arriba**
+   - `GET /api/health` respondió `200`
+
+2. **Conversaciones API arriba**
+   - `GET /api/conversations?limit=5` respondió correctamente
+   - En producción había al menos una conversación Telegram activa
+
+3. **Bot de Telegram no aparecía caído**
+   - `GET /api/conversations/1/messages` mostró intercambio real
+   - Último inbound registrado: `qué talleres hay?`
+   - Último outbound del bot: respuesta de “Por el momento no hay talleres programados...”
+   - Timestamp del último reply: `2026-04-09 02:46` hora Bolivia aproximadamente
+
+4. **Webhook Telegram sano**
+   - `getWebhookInfo` devolvió:
+     - URL correcta
+     - `pending_update_count: 0`
+     - sin error reportado por Telegram
+
+### Lo implementado en esta sesión
+1. **Fix de scroll / robustez en Conversations**
+   - `client/src/pages/Conversations.jsx`
+     - ahora hace auto-scroll al final del hilo cuando cambian mensajes o conversación
+   - `client/src/index.css`
+     - se añadió `min-height: 0` a paneles clave del inbox
+     - se añadió `overscroll-behavior: contain` a lista y thread
+   - Objetivo:
+     - asegurar scroll correcto en layouts grid/flex
+     - evitar paneles “congelados” por comportamiento del navegador
+
+2. **Build frontend actualizado**
+   - `cd client && npm run build` corrió OK
+   - `client/dist/` quedó actualizado
+
+### Archivos modificados en sesión 10
+- `client/src/pages/Conversations.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Notas importantes
+- `node --check` no valida `.jsx` con la versión actual de Node del entorno; la validación real del frontend siguió siendo `vite build`
+- No hubo evidencia dura de que el webhook de Telegram estuviera roto en el momento de la revisión
+- Si Daniel vuelve a ver “silencio” del bot, el siguiente paso correcto sería instrumentar logging persistente del webhook/engine en producción para capturar fallos intermitentes
+
+### Siguiente paso si reaparece el problema del bot
+- guardar log estructurado por update inbound en `webhooks_log` o similar
+- loguear:
+  - update recibido
+  - `incoming.contentType`
+  - fase de conversación
+  - respuesta elegida
+  - error exacto si falla `sendText` o `sendButtons`
+
+### Verificación hecha
+- `GET https://darkred-kangaroo-559638.hostingersite.com/api/health`: 200
+- `GET https://darkred-kangaroo-559638.hostingersite.com/api/conversations?limit=5`: OK
+- `GET https://darkred-kangaroo-559638.hostingersite.com/api/conversations/1/messages`: OK
+- `POST https://api.telegram.org/.../getWebhookInfo`: OK
+- `cd client && npm run build`: OK
+
+---
+
+## Estado actual: 2026-04-09 — SESIÓN 11 (completada)
+
+### Resumen
+Daniel aclaró que el problema real no era Telegram sino la UI del módulo `Conversaciones`: la lista quedaba trabada, se intuían conversaciones más abajo pero no se podía scrollear, y además quería asegurar que las más recientes queden siempre arriba. Se aplicó un fix más agresivo de scroll y orden visual.
+
+### Lo implementado en esta sesión
+1. **Lista de conversaciones ordenada explícitamente**
+   - `client/src/pages/Conversations.jsx`
+   - Al cargar desde API, las conversaciones ahora se ordenan en frontend por:
+     - `last_message_at` descendente
+     - fallback `started_at` descendente
+   - Eso garantiza:
+     - más nuevas arriba
+     - más antiguas abajo
+
+2. **Scroll de lista endurecido**
+   - `client/src/index.css`
+   - Se añadió a `.conversations-list`:
+     - `height: 100%`
+     - `max-height: 100%`
+     - `overflow-x: hidden`
+     - `-webkit-overflow-scrolling: touch`
+     - `touch-action: pan-y`
+   - También se reforzó `.conversations-layout` con `100dvh` y `max-height`
+
+3. **Reset visual al tope**
+   - `client/src/pages/Conversations.jsx`
+   - Al recargarse la lista, el contenedor vuelve al inicio para dejar visibles las conversaciones más recientes
+
+### Archivos modificados en sesión 11
+- `client/src/pages/Conversations.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `CLAUDE.md`
+- `HANDOFF.md`
+
+### Verificación hecha
+- `cd client && npm run build`: OK
+
+### Nota
+- No se hizo push en esta sesión todavía

@@ -1,7 +1,9 @@
 const { query } = require('../db');
 const TelegramAdapter = require('./channels/telegram');
+const WhatsAppAdapter = require('./channels/whatsapp');
 const { getActivePaymentOptions, getPaymentOptionBySlot, getPaymentQrAsset } = require('./paymentOptions');
 const { broadcast } = require('./adminEvents');
+const { getMessageTarget } = require('./whatsappIdentity');
 
 function parseJson(value) {
   if (!value) return {};
@@ -95,13 +97,29 @@ function getTelegramAdapter() {
   return new TelegramAdapter(token);
 }
 
+async function getMessagingContext(tenantId, enrollment) {
+  if (enrollment.channel === 'whatsapp') {
+    const adapter = await WhatsAppAdapter.forTenant(tenantId);
+    const target = await getMessageTarget(tenantId, enrollment.lead_id);
+    if (!target?.phone && !target?.bsuid) {
+      throw new Error('No hay target de WhatsApp disponible para esta inscripción');
+    }
+    return { adapter, target };
+  }
+
+  return {
+    adapter: getTelegramAdapter(),
+    target: enrollment.lead_phone,
+  };
+}
+
 async function resendPaymentInstructions(tenantId, enrollment) {
-  const adapter = getTelegramAdapter();
+  const { adapter, target } = await getMessagingContext(tenantId, enrollment);
   const options = await getActivePaymentOptions(tenantId);
 
   if (!options.length) {
     await adapter.sendText(
-      enrollment.lead_phone,
+      target,
       `Hola ${enrollment.lead_name || ''}. Aún no tengo opciones de cobro cargadas aquí. Daniel te enviará el cobro manualmente.`
     );
     return { mode: 'text' };
@@ -112,7 +130,7 @@ async function resendPaymentInstructions(tenantId, enrollment) {
     : `Hola ${enrollment.lead_name || ''}. Te reenvío las opciones de pago para ${enrollment.workshop_name}. Elige la que corresponda:`;
 
   await adapter.sendButtons(
-    enrollment.lead_phone,
+    target,
     text,
     options.map((option) => ({
       id: `payopt_${option.slot}`,
@@ -124,7 +142,7 @@ async function resendPaymentInstructions(tenantId, enrollment) {
 }
 
 async function resendPaymentQr(tenantId, enrollment) {
-  const adapter = getTelegramAdapter();
+  const { adapter, target } = await getMessagingContext(tenantId, enrollment);
   let slot = Number(enrollment.conversation_metadata?.payment_request?.slot || 0);
 
   if (!slot) {
@@ -143,7 +161,7 @@ async function resendPaymentQr(tenantId, enrollment) {
   }
 
   await adapter.sendImage(
-    enrollment.lead_phone,
+    target,
     asset.data,
     `QR de pago · ${option.label} · Bs ${option.amount}\nCuando hagas el pago, envíame aquí mismo el comprobante.`,
     asset.mime_type

@@ -15,7 +15,7 @@ class ChannelAdapter {
 
   /**
    * Envía un mensaje de texto
-   * @param {string} recipientId - ID del destinatario en el canal
+   * @param {string|{ phone?: string, bsuid?: string }} recipientId - Destino del destinatario en el canal
    * @param {string} text - Texto a enviar
    * @returns {Promise<{ messageId: string }>}
    */
@@ -25,7 +25,7 @@ class ChannelAdapter {
 
   /**
    * Envía un mensaje con botones/quick replies
-   * @param {string} recipientId
+   * @param {string|{ phone?: string, bsuid?: string }} recipientId
    * @param {string} text
    * @param {Array<{ id: string, label: string }>} buttons
    * @returns {Promise<{ messageId: string }>}
@@ -36,7 +36,7 @@ class ChannelAdapter {
 
   /**
    * Envía una imagen
-   * @param {string} recipientId
+   * @param {string|{ phone?: string, bsuid?: string }} recipientId
    * @param {Buffer|string} image - Buffer o URL
    * @param {string} caption
    * @returns {Promise<{ messageId: string }>}

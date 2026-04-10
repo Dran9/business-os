@@ -60,12 +60,20 @@ class TelegramAdapter extends ChannelAdapter {
     };
   }
 
+  resolveRecipientId(recipientOrTarget) {
+    if (recipientOrTarget && typeof recipientOrTarget === 'object') {
+      return String(recipientOrTarget.phone || recipientOrTarget.chatId || recipientOrTarget.id || '');
+    }
+    return String(recipientOrTarget || '');
+  }
+
   async sendText(recipientId, text) {
+    const chatId = this.resolveRecipientId(recipientId);
     const res = await fetch(`${this.apiBase}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: recipientId,
+        chat_id: chatId,
         text,
         parse_mode: 'HTML',
       }),
@@ -79,6 +87,7 @@ class TelegramAdapter extends ChannelAdapter {
   }
 
   async sendButtons(recipientId, text, buttons) {
+    const chatId = this.resolveRecipientId(recipientId);
     // Telegram inline keyboard
     const keyboard = buttons.map(b => ([{
       text: b.label,
@@ -89,7 +98,7 @@ class TelegramAdapter extends ChannelAdapter {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: recipientId,
+        chat_id: chatId,
         text,
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: keyboard },
@@ -104,10 +113,11 @@ class TelegramAdapter extends ChannelAdapter {
   }
 
   async sendImage(recipientId, image, caption = '', mimeType = 'image/png') {
+    const chatId = this.resolveRecipientId(recipientId);
     let res;
     if (Buffer.isBuffer(image)) {
       const formData = new FormData();
-      formData.append('chat_id', recipientId);
+      formData.append('chat_id', chatId);
       formData.append('caption', caption);
       formData.append('parse_mode', 'HTML');
       formData.append('photo', new Blob([image], { type: mimeType }), 'qr.png');
@@ -120,7 +130,7 @@ class TelegramAdapter extends ChannelAdapter {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chat_id: recipientId,
+          chat_id: chatId,
           photo: image,
           caption,
           parse_mode: 'HTML',

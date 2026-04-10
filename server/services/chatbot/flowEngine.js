@@ -9,6 +9,7 @@ const { getActivePaymentOptions } = require('../paymentOptions');
 const { sendPushinatorNotification } = require('../pushinator');
 const { classifyName } = require('../nameClassifier');
 const { findByPhone } = require('../agendaBridge');
+const { resolveIdentity } = require('../whatsappIdentity');
 
 const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options']);
 const TELEGRAM_BUTTON_PREFIX = 'option:';
@@ -399,39 +400,93 @@ async function findPaymentOptionSlot(tenantId, amount) {
   return (exactMatch || options[0] || null)?.slot || null;
 }
 
-async function createOrUpdateLeadForInbound({ tenantId, channel, senderId, senderName, firstMessage }) {
-  const existing = await query(
-    'SELECT * FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1',
-    [tenantId, senderId]
-  );
+async function createOrUpdateLeadForInbound({
+  tenantId,
+  channel,
+  senderId,
+  senderName,
+  firstMessage,
+  identity = null,
+}) {
+  const phone = identity?.phone || senderId || null;
+  let lead = null;
 
-  if (existing[0]) {
-    if (existing[0].deleted_at) {
-      await query(
-        `UPDATE leads
-         SET deleted_at = NULL,
-             name = COALESCE(?, name),
-             source = COALESCE(?, source),
-             last_contact_at = NOW()
-         WHERE id = ? AND tenant_id = ?`,
-        [senderName || null, channel || null, existing[0].id, tenantId]
-      );
-      const restored = await query('SELECT * FROM leads WHERE id = ? LIMIT 1', [existing[0].id]);
-      return restored[0] || null;
+  if (identity?.client_id) {
+    const rows = await query(
+      'SELECT * FROM leads WHERE tenant_id = ? AND id = ? LIMIT 1',
+      [tenantId, identity.client_id]
+    );
+    lead = rows[0] || null;
+  }
+
+  if (!lead && phone) {
+    const rows = await query(
+      'SELECT * FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1',
+      [tenantId, phone]
+    );
+    lead = rows[0] || null;
+  }
+
+  if (lead) {
+    const metadata = parseJson(lead.metadata, {});
+    if (identity?.bsuid) {
+      metadata.whatsapp_identity = {
+        bsuid: identity.bsuid,
+        parent_bsuid: identity.parent_bsuid || null,
+        username: identity.username || null,
+      };
     }
-    return existing[0];
+    if (!metadata.first_message) {
+      metadata.first_message = normalizeText(firstMessage) || null;
+    }
+
+    await query(
+      `UPDATE leads
+       SET deleted_at = NULL,
+           phone = COALESCE(phone, ?),
+           name = COALESCE(?, name),
+           source = COALESCE(?, source),
+           metadata = ?,
+           last_contact_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [phone || null, senderName || null, channel || null, toJson(metadata), lead.id, tenantId]
+    );
+
+    if (identity?.id && identity.client_id !== lead.id) {
+      await query(
+        'UPDATE whatsapp_users SET client_id = ? WHERE tenant_id = ? AND id = ?',
+        [lead.id, tenantId, identity.id]
+      );
+    }
+
+    const refreshed = await query('SELECT * FROM leads WHERE id = ? LIMIT 1', [lead.id]);
+    return refreshed[0] || null;
   }
 
   const metadata = {
     first_message: normalizeText(firstMessage) || null,
   };
+  if (identity?.bsuid) {
+    metadata.whatsapp_identity = {
+      bsuid: identity.bsuid,
+      parent_bsuid: identity.parent_bsuid || null,
+      username: identity.username || null,
+    };
+  }
 
   const result = await query(
     `INSERT INTO leads (
        tenant_id, phone, name, source, status, metadata, first_contact_at, last_contact_at
      ) VALUES (?, ?, ?, ?, 'new', ?, NOW(), NOW())`,
-    [tenantId, senderId, senderName || null, channel, toJson(metadata)]
+    [tenantId, phone || null, senderName || null, channel, toJson(metadata)]
   );
+
+  if (identity?.id) {
+    await query(
+      'UPDATE whatsapp_users SET client_id = ? WHERE tenant_id = ? AND id = ?',
+      [result.insertId, tenantId, identity.id]
+    );
+  }
 
   broadcast('lead:change', { id: result.insertId, reason: 'created' }, tenantId);
   const rows = await query('SELECT * FROM leads WHERE id = ? LIMIT 1', [result.insertId]);
@@ -520,7 +575,7 @@ async function lookupOrCreateContact({ tenantId, phone, waName }) {
   };
 }
 
-async function ensureConversationForLead({ tenantId, leadId, channel }) {
+async function ensureConversationForLead({ tenantId, leadId, channel, bsuid = null }) {
   const existing = await query(
     `SELECT *
      FROM conversations
@@ -531,14 +586,22 @@ async function ensureConversationForLead({ tenantId, leadId, channel }) {
   );
 
   if (existing[0]) {
+    if (bsuid) {
+      await query(
+        'UPDATE conversations SET bsuid = COALESCE(?, bsuid), last_message_at = NOW() WHERE tenant_id = ? AND id = ?',
+        [bsuid, tenantId, existing[0].id]
+      );
+      const rows = await query('SELECT * FROM conversations WHERE id = ? LIMIT 1', [existing[0].id]);
+      return rows[0] || existing[0];
+    }
     return existing[0];
   }
 
   const result = await query(
     `INSERT INTO conversations (
-       tenant_id, lead_id, channel, current_phase, status, started_at, last_message_at, inbox_state, assigned_to
-     ) VALUES (?, ?, ?, ?, 'active', NOW(), NOW(), 'open', 'bot')`,
-    [tenantId, leadId, channel, 'nodo_01']
+       tenant_id, lead_id, channel, bsuid, current_phase, status, started_at, last_message_at, inbox_state, assigned_to
+     ) VALUES (?, ?, ?, ?, ?, 'active', NOW(), NOW(), 'open', 'bot')`,
+    [tenantId, leadId, channel, bsuid || null, 'nodo_01']
   );
 
   broadcast('conversation:change', { id: result.insertId, reason: 'created', leadId }, tenantId);
@@ -546,15 +609,25 @@ async function ensureConversationForLead({ tenantId, leadId, channel }) {
   return rows[0] || null;
 }
 
-async function saveConversationMessage({ conversationId, direction, sender, content, messageId, contentType, metadata = null }) {
+async function saveConversationMessage({
+  conversationId,
+  direction,
+  sender,
+  bsuid = null,
+  content,
+  messageId,
+  contentType,
+  metadata = null,
+}) {
   const result = await query(
     `INSERT INTO messages (
-       conversation_id, direction, sender, content, wa_message_id, content_type, metadata, created_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+       conversation_id, direction, sender, bsuid, content, wa_message_id, content_type, metadata, created_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       conversationId,
       direction,
       sender,
+      bsuid || null,
       content || '',
       messageId || '',
       contentType || 'text',
@@ -564,34 +637,39 @@ async function saveConversationMessage({ conversationId, direction, sender, cont
   return result.insertId;
 }
 
-async function sendResponses(channelAdapter, recipientId, conversationId, tenantId, responses) {
+async function sendResponses(channelAdapter, recipientTarget, conversationId, tenantId, responses) {
   for (const response of responses) {
     let sent = null;
 
     if (response.type === 'image') {
       sent = await channelAdapter.sendImage(
-        recipientId,
+        recipientTarget,
         response.image,
         formatRichText(response.caption || ''),
         response.mimeType
       );
     } else if (response.type === 'buttons') {
       sent = await channelAdapter.sendButtons(
-        recipientId,
+        recipientTarget,
         formatRichText(response.text || ''),
         response.buttons || []
       );
     } else {
       sent = await channelAdapter.sendText(
-        recipientId,
+        recipientTarget,
         formatRichText(response.text || '')
       );
     }
+
+    const messageTarget = recipientTarget && typeof recipientTarget === 'object'
+      ? recipientTarget
+      : { phone: recipientTarget || null, bsuid: null };
 
     await saveConversationMessage({
       conversationId,
       direction: 'outbound',
       sender: 'bot',
+      bsuid: messageTarget.bsuid || null,
       content: getResponsePreview(response),
       messageId: sent?.messageId || '',
       contentType: response.type === 'image' ? 'image' : 'text',
@@ -1250,45 +1328,69 @@ function buildAiSystemPrompt(node, context) {
 }
 
 async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
+  let identity = incoming.identity || null;
+  if ((incoming.channel || channelAdapter.channelName) === 'whatsapp' && (!identity || (!identity.id && (identity.phone || identity.bsuid)))) {
+    identity = await resolveIdentity({
+      tenantId,
+      phone: identity?.phone || incoming.replyTarget?.phone || incoming.senderId || null,
+      bsuid: identity?.bsuid || incoming.replyTarget?.bsuid || null,
+      parentBsuid: identity?.parent_bsuid || identity?.parentBsuid || null,
+      username: identity?.username || null,
+      displayName: incoming.senderName || null,
+    });
+  }
+
   const lead = await createOrUpdateLeadForInbound({
     tenantId,
     channel: incoming.channel || channelAdapter.channelName,
     senderId: incoming.senderId,
     senderName: incoming.senderName,
     firstMessage: incoming.text,
+    identity,
   });
 
   const conversation = await ensureConversationForLead({
     tenantId,
     leadId: lead.id,
     channel: incoming.channel || channelAdapter.channelName,
+    bsuid: identity?.bsuid || incoming.replyTarget?.bsuid || null,
   });
 
   const inboundMessageId = await saveConversationMessage({
     conversationId: conversation.id,
     direction: 'inbound',
     sender: incoming.senderId,
+    bsuid: identity?.bsuid || incoming.replyTarget?.bsuid || null,
     content: incoming.text,
     messageId: incoming.messageId,
     contentType: incoming.contentType,
-    metadata: { source: 'telegram-webhook' },
+    metadata: {
+      source: incoming.metadataSource || `${incoming.channel || channelAdapter.channelName}-webhook`,
+      whatsapp_identity: identity?.bsuid ? {
+        bsuid: identity.bsuid,
+        parent_bsuid: identity.parent_bsuid || null,
+        username: identity.username || null,
+      } : null,
+    },
   });
 
   await query(
     `UPDATE leads
      SET last_contact_at = NOW(),
-         name = COALESCE(name, ?)
+         name = COALESCE(name, ?),
+         phone = COALESCE(phone, ?)
      WHERE tenant_id = ? AND id = ?`,
-    [incoming.senderName || null, tenantId, lead.id]
+    [incoming.senderName || null, identity?.phone || null, tenantId, lead.id]
   );
 
   await query(
     `UPDATE conversations
      SET last_message_at = NOW(),
+         bsuid = COALESCE(?, bsuid),
          human_messages_count = human_messages_count + 1,
          inbox_state = 'open'
      WHERE tenant_id = ? AND id = ?`,
-    [tenantId, conversation.id]
+    [identity?.bsuid || incoming.replyTarget?.bsuid || null, tenantId, conversation.id]
   );
 
   broadcast('lead:change', { id: lead.id, reason: 'inbound-message' }, tenantId);
@@ -1311,7 +1413,13 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
       });
 
       if (diagnosticResponse) {
-        await sendResponses(channelAdapter, incoming.senderId, conversation.id, tenantId, [diagnosticResponse]);
+        await sendResponses(
+          channelAdapter,
+          incoming.replyTarget || incoming.senderId,
+          conversation.id,
+          tenantId,
+          [diagnosticResponse]
+        );
         return {
           lead,
           conversation,
@@ -1370,7 +1478,13 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
   });
 
   if (Array.isArray(result.responses) && result.responses.length > 0) {
-    await sendResponses(channelAdapter, incoming.senderId, conversation.id, tenantId, result.responses);
+    await sendResponses(
+      channelAdapter,
+      incoming.replyTarget || incoming.senderId,
+      conversation.id,
+      tenantId,
+      result.responses
+    );
   }
 
   return {

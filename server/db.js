@@ -372,7 +372,7 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS leads (
         id INT AUTO_INCREMENT PRIMARY KEY,
         tenant_id INT NOT NULL,
-        phone VARCHAR(20) NOT NULL,
+        phone VARCHAR(20) NULL,
         name VARCHAR(200),
         city VARCHAR(100),
         source VARCHAR(50),
@@ -423,6 +423,31 @@ async function initializeDatabase() {
         KEY idx_deleted (deleted_at),
         FOREIGN KEY (tenant_id) REFERENCES tenants(id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+    // --- WhatsApp identity map (phone <-> BSUID) ---
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS whatsapp_users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        bsuid VARCHAR(120) DEFAULT NULL,
+        parent_bsuid VARCHAR(120) DEFAULT NULL,
+        phone VARCHAR(20) DEFAULT NULL,
+        username VARCHAR(120) DEFAULT NULL,
+        client_id INT DEFAULT NULL,
+        source_waba_id VARCHAR(100) DEFAULT NULL,
+        source_phone_number_id VARCHAR(100) DEFAULT NULL,
+        first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_whatsapp_users_tenant_bsuid (tenant_id, bsuid),
+        UNIQUE KEY uk_whatsapp_users_tenant_phone (tenant_id, phone),
+        KEY idx_whatsapp_users_client (tenant_id, client_id),
+        KEY idx_whatsapp_users_seen (tenant_id, last_seen_at),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+        FOREIGN KEY (client_id) REFERENCES leads(id) ON DELETE SET NULL
+      )
     `);
 
     // --- Playbooks (embudos conversacionales) ---
@@ -479,6 +504,7 @@ async function initializeDatabase() {
         playbook_id INT,
         workshop_id INT,
         channel VARCHAR(20) DEFAULT 'whatsapp',
+        bsuid VARCHAR(120) DEFAULT NULL,
         current_phase VARCHAR(50),
         status ENUM('active','converted','lost','escalated','dormant') DEFAULT 'active',
         assigned_to VARCHAR(100) DEFAULT 'bot',
@@ -494,6 +520,7 @@ async function initializeDatabase() {
         metadata JSON,
         KEY idx_tenant_status (tenant_id, status),
         KEY idx_lead (lead_id),
+        KEY idx_bsuid (tenant_id, bsuid),
         KEY idx_workshop (workshop_id),
         FOREIGN KEY (tenant_id) REFERENCES tenants(id),
         FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
@@ -528,7 +555,8 @@ async function initializeDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         conversation_id INT NOT NULL,
         direction ENUM('inbound','outbound') NOT NULL,
-        sender VARCHAR(20) NOT NULL,
+        sender VARCHAR(120) NOT NULL,
+        bsuid VARCHAR(120) DEFAULT NULL,
         content_type ENUM('text','image','document','audio','button_reply','template','system') DEFAULT 'text',
         content TEXT,
         wa_message_id VARCHAR(100),
@@ -537,6 +565,7 @@ async function initializeDatabase() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         KEY idx_conversation (conversation_id),
         KEY idx_wa_msg (wa_message_id),
+        KEY idx_bsuid (bsuid),
         FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
       )
     `);
@@ -752,6 +781,7 @@ async function initializeDatabase() {
 
     await conn.execute('ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS display_name VARCHAR(200)').catch(() => {});
     await conn.execute('ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
+    await conn.execute('ALTER TABLE leads MODIFY COLUMN phone VARCHAR(20) NULL').catch(() => {});
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_options JSON').catch(() => {});
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_destination_accounts TEXT').catch(() => {});
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_1 MEDIUMBLOB').catch(() => {});
@@ -764,7 +794,12 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE tenants ADD COLUMN IF NOT EXISTS payment_qr_4_mime VARCHAR(100)').catch(() => {});
     await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS inbox_state VARCHAR(20) DEFAULT "open"').catch(() => {});
     await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS internal_notes TEXT').catch(() => {});
+    await conn.execute('ALTER TABLE conversations ADD COLUMN IF NOT EXISTS bsuid VARCHAR(120)').catch(() => {});
+    await conn.execute('ALTER TABLE conversations ADD INDEX IF NOT EXISTS idx_bsuid (tenant_id, bsuid)').catch(() => {});
     await conn.execute('UPDATE conversations SET inbox_state = "open" WHERE inbox_state IS NULL OR inbox_state = ""').catch(() => {});
+    await conn.execute('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bsuid VARCHAR(120)').catch(() => {});
+    await conn.execute('ALTER TABLE messages MODIFY COLUMN sender VARCHAR(120) NOT NULL').catch(() => {});
+    await conn.execute('ALTER TABLE messages ADD INDEX IF NOT EXISTS idx_bsuid (bsuid)').catch(() => {});
     await conn.execute('ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS revenue_generated DECIMAL(10,2) DEFAULT 0').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_requested_at DATETIME').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS verified_at DATETIME').catch(() => {});
@@ -777,6 +812,17 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_id INT DEFAULT NULL').catch(() => {});
     await conn.execute('ALTER TABLE leads ADD INDEX IF NOT EXISTS idx_contact_id (contact_id)').catch(() => {});
     await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS deleted_at DATETIME DEFAULT NULL').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS parent_bsuid VARCHAR(120)').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS username VARCHAR(120)').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS client_id INT DEFAULT NULL').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS source_waba_id VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS source_phone_number_id VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS created_at DATETIME DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD INDEX IF NOT EXISTS idx_whatsapp_users_client (tenant_id, client_id)').catch(() => {});
+    await conn.execute('ALTER TABLE whatsapp_users ADD INDEX IF NOT EXISTS idx_whatsapp_users_seen (tenant_id, last_seen_at)').catch(() => {});
     await conn.execute(
       "UPDATE admin_users SET display_name = 'Daniel' WHERE username = 'owner' AND (display_name IS NULL OR display_name = '')"
     ).catch(() => {});

@@ -3,7 +3,9 @@ const authMiddleware = require('../middleware/auth');
 const { tenantMiddleware } = require('../middleware/tenant');
 const { query, queryPaginated } = require('../db');
 const TelegramAdapter = require('../services/channels/telegram');
+const WhatsAppAdapter = require('../services/channels/whatsapp');
 const { broadcast } = require('../services/adminEvents');
+const { getMessageTarget } = require('../services/whatsappIdentity');
 
 const router = express.Router();
 const VALID_INBOX_STATES = new Set(['open', 'pending', 'resolved']);
@@ -31,6 +33,16 @@ function getTelegramAdapter() {
     throw new Error('TELEGRAM_BOT_TOKEN no configurado');
   }
   return new TelegramAdapter(token);
+}
+
+async function getChannelAdapter(channel, tenantId) {
+  if (channel === 'telegram') {
+    return getTelegramAdapter();
+  }
+  if (channel === 'whatsapp') {
+    return WhatsAppAdapter.forTenant(tenantId);
+  }
+  throw new Error('Canal no soportado');
 }
 
 async function getConversationById(tenantId, id) {
@@ -112,8 +124,8 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
     }
 
     if (search) {
-      sql += ' AND (COALESCE(l.name, "") LIKE ? OR l.phone LIKE ? OR COALESCE(w.name, "") LIKE ?)';
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      sql += ' AND (COALESCE(l.name, "") LIKE ? OR COALESCE(l.phone, "") LIKE ? OR COALESCE(c.bsuid, "") LIKE ? OR COALESCE(w.name, "") LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     sql += ' ORDER BY COALESCE(c.last_message_at, c.started_at) DESC';
@@ -135,7 +147,7 @@ router.get('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) =
     }
 
     const messages = await query(
-      `SELECT id, conversation_id, direction, sender, content_type, content, metadata, created_at
+      `SELECT id, conversation_id, direction, sender, bsuid, content_type, content, metadata, created_at
        FROM messages
        WHERE conversation_id = ?
        ORDER BY created_at ASC, id ASC`,
@@ -244,29 +256,36 @@ router.post('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) 
       return res.status(404).json({ error: 'Conversación no encontrada' });
     }
 
-    if (conversation.channel !== 'telegram') {
-      return res.status(400).json({ error: 'Canal no soportado todavía para envío manual' });
+    const adapter = await getChannelAdapter(conversation.channel, req.tenantId);
+    let target = conversation.lead_phone;
+
+    if (conversation.channel === 'whatsapp') {
+      target = await getMessageTarget(req.tenantId, conversation.lead_id);
+      if (!target?.phone && !target?.bsuid) {
+        return res.status(400).json({ error: 'No hay target de WhatsApp disponible para esta conversación' });
+      }
     }
 
-    const adapter = getTelegramAdapter();
-    const sent = await adapter.sendText(conversation.lead_phone, escapeHtml(content));
+    const sent = await adapter.sendText(target, escapeHtml(content));
+    const outboundBsuid = target && typeof target === 'object' ? target.bsuid || null : null;
 
     const result = await query(
-      `INSERT INTO messages (conversation_id, direction, sender, content, wa_message_id, content_type, created_at)
-       VALUES (?, 'outbound', ?, ?, ?, 'text', NOW())`,
-      [conversation.id, req.user?.username || 'admin', content, sent.messageId || '']
+      `INSERT INTO messages (conversation_id, direction, sender, bsuid, content, wa_message_id, content_type, created_at)
+       VALUES (?, 'outbound', ?, ?, ?, ?, 'text', NOW())`,
+      [conversation.id, req.user?.username || 'admin', outboundBsuid, content, sent.messageId || '']
     );
 
     await query(
       `UPDATE conversations
        SET last_message_at = NOW(),
+           bsuid = COALESCE(?, bsuid),
            inbox_state = 'pending',
            assigned_to = CASE
              WHEN assigned_to IS NULL OR assigned_to = '' OR assigned_to = 'bot' THEN ?
              ELSE assigned_to
            END
        WHERE id = ? AND tenant_id = ?`,
-      [req.user?.username || 'admin', conversation.id, req.tenantId]
+      [outboundBsuid, req.user?.username || 'admin', conversation.id, req.tenantId]
     );
 
     broadcast('message:change', { conversationId: conversation.id, messageId: result.insertId, reason: 'manual-send' }, req.tenantId);

@@ -91,7 +91,10 @@ router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
 
     // Tags del lead
     const tags = await query(
-      "SELECT * FROM tags WHERE target_type = 'lead' AND target_id = ? AND tenant_id = ?",
+      `SELECT *
+       FROM tags
+       WHERE target_type = 'lead' AND target_id = ? AND tenant_id = ?
+       ORDER BY created_at DESC, id DESC`,
       [lead.id, req.tenantId]
     );
 

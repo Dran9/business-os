@@ -52,6 +52,20 @@ const TAG_CATEGORIES = [
   { value: 'quality', label: 'Calidad' },
 ]
 
+const TAG_CATEGORY_LABELS = {
+  intent: 'Intent',
+  sentiment: 'Sentimiento',
+  objection: 'Objeción',
+  stage: 'Etapa',
+  behavior: 'Comportamiento',
+  quality: 'Calidad',
+  custom: 'Manual',
+}
+
+const STATE_TAG_CATEGORIES = new Set(['quality', 'sentiment', 'stage'])
+const STATE_TAG_ORDER = ['quality', 'sentiment', 'stage']
+const SIGNAL_TAG_ORDER = ['intent', 'objection', 'behavior', 'custom']
+
 export default function Leads() {
   const [leads, setLeads] = useState([])
   const [loading, setLoading] = useState(true)
@@ -174,6 +188,7 @@ export default function Leads() {
     }
     return { income, expense }
   }, [selectedLead?.transactions])
+  const leadTagSummary = useMemo(() => summarizeLeadTags(selectedLead?.tags || []), [selectedLead?.tags])
   const visibleLeadIds = useMemo(() => leads.map((lead) => lead.id), [leads])
   const allLeadsSelected = visibleLeadIds.length > 0 && visibleLeadIds.every((id) => selection.isSelected(id))
 
@@ -396,24 +411,53 @@ export default function Leads() {
                   </div>
                   <div className="tag-section mt-4">
                     <div className="text-sm font-semibold">Tags</div>
-                    {selectedLead.tags?.length > 0 ? (
-                      <div className="flex gap-1 mt-2" style={{ flexWrap: 'wrap' }}>
-                        {selectedLead.tags.map((tag) => (
-                          <div key={tag.id} className="flex items-center gap-1" style={{ flexWrap: 'nowrap' }}>
-                            <span className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>
-                              {tag.value}
-                            </span>
-                            {tag.source === 'manual' && (
-                              <ConfirmButton
-                                size="sm"
-                                label="Eliminar"
-                                confirmLabel="¿Eliminar?"
-                                onConfirm={() => handleRemoveTag(tag.id)}
-                              />
-                            )}
+                    {leadTagSummary.hasAny ? (
+                      <>
+                        {leadTagSummary.stateTags.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-xs text-muted">Estado actual</div>
+                            <div className="flex gap-1 mt-1" style={{ flexWrap: 'wrap' }}>
+                              {leadTagSummary.stateTags.map((tag) => (
+                                <div key={tag.id} className="flex items-center gap-1" style={{ flexWrap: 'nowrap' }}>
+                                  <span className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>
+                                    {formatLeadTag(tag)}
+                                  </span>
+                                  {tag.source === 'manual' && (
+                                    <ConfirmButton
+                                      size="sm"
+                                      label="Eliminar"
+                                      confirmLabel="¿Eliminar?"
+                                      onConfirm={() => handleRemoveTag(tag.id)}
+                                    />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        ))}
-                      </div>
+                        )}
+                        {leadTagSummary.signalTags.length > 0 && (
+                          <div className="mt-3">
+                            <div className="text-xs text-muted">Señales detectadas</div>
+                            <div className="flex gap-1 mt-1" style={{ flexWrap: 'wrap' }}>
+                              {leadTagSummary.signalTags.map((tag) => (
+                                <div key={tag.id} className="flex items-center gap-1" style={{ flexWrap: 'nowrap' }}>
+                                  <span className={TAG_CLASSES[tag.category] || 'tag tag-custom'}>
+                                    {formatLeadTag(tag)}
+                                  </span>
+                                  {tag.source === 'manual' && (
+                                    <ConfirmButton
+                                      size="sm"
+                                      label="Eliminar"
+                                      confirmLabel="¿Eliminar?"
+                                      onConfirm={() => handleRemoveTag(tag.id)}
+                                    />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <div className="text-sm text-muted mt-2">Sin tags todavía.</div>
                     )}
@@ -661,4 +705,67 @@ function timelineTime(value) {
   if (!value) return '—'
   const date = new Date(value)
   return `${formatDate(date)} · ${date.toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz', hour: '2-digit', minute: '2-digit' })}`
+}
+
+function summarizeLeadTags(tags) {
+  const items = Array.isArray(tags) ? [...tags] : []
+  const sorted = items.sort(compareTagRecency)
+  const latestStateByCategory = new Map()
+  const uniqueSignalTags = new Map()
+
+  for (const tag of sorted) {
+    const category = String(tag?.category || '').trim()
+    const value = String(tag?.value || '').trim().toLowerCase()
+    if (!category || !value) continue
+
+    if (STATE_TAG_CATEGORIES.has(category)) {
+      if (!latestStateByCategory.has(category)) {
+        latestStateByCategory.set(category, tag)
+      }
+      continue
+    }
+
+    const key = `${category}:${value}`
+    if (!uniqueSignalTags.has(key)) {
+      uniqueSignalTags.set(key, tag)
+    }
+  }
+
+  const stateTags = Array.from(latestStateByCategory.values()).sort(compareTagCategory(STATE_TAG_ORDER))
+  const signalTags = Array.from(uniqueSignalTags.values()).sort(compareTagCategory(SIGNAL_TAG_ORDER))
+
+  return {
+    hasAny: stateTags.length > 0 || signalTags.length > 0,
+    stateTags,
+    signalTags,
+  }
+}
+
+function compareTagRecency(left, right) {
+  const leftTime = left?.created_at ? new Date(left.created_at).getTime() : 0
+  const rightTime = right?.created_at ? new Date(right.created_at).getTime() : 0
+  if (rightTime !== leftTime) return rightTime - leftTime
+  return Number(right?.id || 0) - Number(left?.id || 0)
+}
+
+function compareTagCategory(order) {
+  return (left, right) => {
+    const leftIndex = order.indexOf(left?.category)
+    const rightIndex = order.indexOf(right?.category)
+    const normalizedLeft = leftIndex === -1 ? order.length : leftIndex
+    const normalizedRight = rightIndex === -1 ? order.length : rightIndex
+    if (normalizedLeft !== normalizedRight) return normalizedLeft - normalizedRight
+    return compareTagRecency(left, right)
+  }
+}
+
+function formatLeadTag(tag) {
+  const label = TAG_CATEGORY_LABELS[tag?.category] || 'Tag'
+  return `${label}: ${humanizeTagValue(tag?.value)}`
+}
+
+function humanizeTagValue(value) {
+  const normalized = String(value || '').trim().replace(/_/g, ' ')
+  if (!normalized) return '—'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
 }

@@ -1,627 +1,101 @@
-# Proyecto: Business OS — Daniel MacLean
+# Business OS — Daniel MacLean
 
-## Qué es
-Sistema operativo privado para gestionar el negocio de talleres terapéuticos.
-Chatbot de ventas por WhatsApp, CRM de leads, finanzas, marketing, insights.
-Solo admin (sin frontend público). Ultra responsivo para iOS wrapper.
-Deploy en **Hostinger** (segundo sitio Node.js).
+Sistema operativo privado para gestión de talleres terapéuticos. Chatbot de ventas por WhatsApp/Telegram, CRM de leads, finanzas, marketing, insights. Solo admin, sin frontend público.
 
-## Dueño
-Daniel MacLean — psicólogo en Cochabamba, Bolivia
-- Teléfono personal: 59172034151
-- WhatsApp Business: 59169650802
-- Negocio: talleres de constelaciones familiares, coaching, desarrollo personal
-- Operación esperada hoy: una instalación por cliente/negocio, con hasta 4 usuarios internos como equipo
-- Caso real actual: Daniel y su novia deben poder entrar con cuentas separadas y repartir operación
-
-## URLs
-- **App**: https://darkred-kangaroo-559638.hostingersite.com/
-- **Health**: https://darkred-kangaroo-559638.hostingersite.com/api/health
-- **Repo**: https://github.com/Dran9/business-os.git
-- **PIN admin**: 4747
+**Dueño:** Daniel MacLean, psicólogo en Cochabamba, Bolivia. Tel: 59172034151. WA Business: 59169650802.
+**URLs:** app `https://darkred-kangaroo-559638.hostingersite.com` · health `/api/health`
+**Repo:** `Dran9/business-os` rama `main` · **PIN admin:** 4747
+**Proyecto hermano:** `agenda4.0` en `/Users/dran/Documents/Codex openai/agenda4.0/` (bridge read-only)
 
 ## Stack
-- **Server:** Express + MySQL (Hostinger) — `server/`
-- **Client:** React 18 + Vite 8 + CSS custom properties — `client/`
-- **LLM:** Groq (gratis) para tagging + DeepSeek para conversaciones
-- **Chat canal:** Telegram Bot API (FUNCIONANDO — @dranTele_bot)
-- **Chat canal futuro:** WhatsApp Cloud API (cuando tenga otro chip)
-- **Integraciones:** Google Vision OCR, Pushinator, Meta Graph API (futuro)
-- **Deploy:** Hostinger Business Web Hosting (segundo sitio Node.js)
-- **Auth:** usuario + PIN de 4 dígitos, JWT 90 días
+- Backend: Express + MySQL (Hostinger) — `server/`
+- Frontend: React 18 + Vite + CSS custom properties — `client/`
+- LLM: Groq (`llama-3.3-70b-versatile`) + DeepSeek. Fallback determinístico si falta `GROQ_API_KEY`
+- Chat: Telegram Bot API (`@dranTele_bot`, funcionando) · WhatsApp Cloud API (preparado, BSUID-ready)
+- OCR: Google Vision API
+- Notificaciones: Pushinator (`PUSHINATOR_TOKEN` + `PUSHINATOR_CHANNEL_ID`)
+- Auth: username + PIN 4 dígitos, JWT 90 días
 
-## Proyecto hermano
-- **Agenda 4.0:** `/Users/dran/Documents/Codex openai/agenda4.0/`
-- Business OS consulta datos de Agenda 4.0 en modo read-only por bridge dedicado
-- Agenda NO depende de Business OS
-- Comparten: WABA (mismo WhatsApp Business Account), Google Vision, patrón de deploy
-
-## Reglas críticas (heredadas de Agenda — NO ignorar)
-
-### Hostinger
+## Reglas Hostinger (CRÍTICAS — mismas que agenda4.0)
 - `dns.setDefaultResultOrder('ipv4first')` DEBE ser la primera línea de `server/db.js`
-- `client/dist/` se commitea al repo — Hostinger no ejecuta builds
-- El `"build"` en package.json raíz es un no-op
-- Después de cambios en client/, correr `cd client && npm run build` y commitear `client/dist/`
+- `client/dist/` se commitea — Hostinger no ejecuta builds
+- El script `"build"` en `package.json` raíz es un **no-op**
+- Después de cambios en `client/`: `cd client && npm run build` → commitear `client/dist/`
 - `express.static()` con `maxAge: 0, etag: false` — LiteSpeed cachea agresivamente
-- SPA fallback usa `fs.readFileSync()` no `res.sendFile()`
+- SPA fallback usa `fs.readFileSync()`, no `res.sendFile()`
+- **NUNCA abrir branches.** Todo va directo a `main`
 
-### Textos en español
-- NUNCA usar unicode escapes (\u00f3, \u00e9, etc.) en archivos JSX
-- Siempre escribir los caracteres directamente: ó, é, í, á, ú, ñ, ¿, ¡
+## Reglas React + código
+- `type="button"` en todo `<button>` que no sea submit de form
+- Textos en español: NUNCA unicode escapes (`\u00f3`), siempre caracteres directos (`ó`, `é`, etc.)
+- Sin emojis en la UI salvo donde sea funcionalmente necesario
+- Sin `AskUserQuestion`
+- Responder TODAS las preguntas, sin cherry-pick
+- Nunca hacer push sin pedido explícito
 
-### Buttons en React
-- SIEMPRE poner `type="button"` en todo `<button>` que NO sea submit de form
-
-### Timezone
-- Server SIEMPRE trabaja en America/La_Paz (-04:00)
+## Reglas Timezone
+- Siempre `America/La_Paz` (-04:00). Bolivia no tiene DST
 - `timezone: '-04:00'` en mysql2 pool — NUNCA quitar
-- Bolivia no tiene DST
-- `toISOString()` devuelve UTC. Para mostrar horas en Bolivia usar `toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz' })`
+- `toISOString()` devuelve UTC — usar `toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz' })`
 
-### Preferencias de Daniel
-- NO emojis en la UI (excepto donde sea funcionalmente necesario)
-- NO usar AskUserQuestion
-- Fonts: +2pt respecto al diseño base
-- Mobile: padding 12px en móvil, 24px en >=520px
-- Responder a TODAS las preguntas, no cherry-pick
-- Nunca hacer push sin que lo pida explícitamente
-
-### MySQL optimizada
-- Connection pooling: 10 conexiones, 5 idle
-- Slow query logging: >200ms se logea
-- Queries paginadas con helper `queryPaginated()`
-- Transacciones con `withTransaction(fn)`
-- Índices estratégicos en todas las tablas (ya definidos en schema)
-- Named placeholders habilitados
+## WhatsApp / Telegram
+- WABA ID: `1400277624968330` · Phone Number ID: `887756534426165` (compartido con agenda4.0)
+- Graph API: `v22.0`
+- BSUID: infraestructura lista en `server/services/whatsappIdentity.js` (FK a `leads.id`)
+- Telegram: canal de prueba activo. Webhook sin `secret_token` (intencional)
 
 ## Arquitectura
-
-### Tenant / instalación
-- El schema conserva `tenant_id` en todas las tablas principales
-- En la práctica actual, el producto se está construyendo como **single-tenant por instalación**
-- Eso permite venderlo instalado en el servidor del cliente sin tener que operar un SaaS
-- `tenants` sigue siendo útil para branding, config, API keys y posible evolución futura
-- Si en el futuro se ofrece SaaS, la base ya deja la puerta abierta
-
-### Sistema de diseño
-- **CSS custom properties** en `client/src/index.css`
-- Para cambiar el look entero: editar `:root`
-- Dark mode: `[data-theme="dark"]`
-- Multi-tenant branding: se sobreescriben variables vía JS al cargar `brand_config`
-- Componentes NUNCA tienen colores hardcodeados
-- Tags tienen colores por categoría: intent=azul, sentiment=amarillo, objection=rojo, stage=verde, behavior=morado, quality=naranja
-
-### Capas de la arquitectura
 ```
-Routes (thin)  → validate request → call service → respond HTTP
-Services       → toda la lógica de negocio
-Middleware     → auth (JWT) + tenant resolver + validation
-Cron           → followups, reminders, analysis batch
+Routes (thin)  →  validate request → call service → respond HTTP
+Services       →  toda la lógica de negocio
+Middleware     →  auth (JWT) + tenant resolver + validation
+Cron           →  followups, reminders, analysis batch
 ```
+- Design system: CSS custom properties en `client/src/index.css`. Componentes NUNCA tienen colores hardcodeados.
+- Dark mode: `[data-theme="dark"]`. Multi-tenant branding: override de variables vía JS.
+- Tags por categoría: intent=azul, sentiment=amarillo, objection=rojo, stage=verde, behavior=morado, quality=naranja.
+- Single-tenant por instalación en la práctica; schema conserva `tenant_id` para evolución futura.
 
-## Módulos del sistema
+## Módulos
+Chatbot/Embudo · CRM Leads · Finanzas · Marketing/Campañas · Insights · Conversaciones/Inbox · Talleres/Workshops · Inscripciones · Contactos · Configuración · Equipo
 
-### 1. Chatbot / Embudo / Venta
-- Motor de conversación híbrido: embudo determinístico por nodos + pasos con LLM
-- `flow_nodes` y `flow_sessions` gobiernan el embudo actual
-- El webhook de Telegram ya entra por `flowEngine`, no por fases hardcodeadas
-- Fases conceptuales: qualify → educate (LLM) → close → confirm (OCR)
-- Escalación a Daniel vía Pushinator
-- Groq actual: `llama-3.3-70b-versatile` con fallback determinístico si falta `GROQ_API_KEY`
+## Archivos clave
+- `server/db.js` — schema MySQL + migraciones (corren al arrancar)
+- `server/routes/webhook.js` — webhook Telegram/WhatsApp entrante
+- `server/services/chatbot/flowEngine.js` — motor de flujos conversacionales
+- `server/services/chatbot/paymentWorkflow.js` — OCR + validación de comprobantes
+- `server/services/whatsappIdentity.js` — resolución BSUID ↔ teléfono (leads)
+- `server/services/channels/whatsapp.js` — envío WA (phone o BSUID)
+- `server/services/channels/telegram.js` — envío Telegram
+- `server/services/enrollments.js` — inscripciones a talleres
+- `server/services/agendaBridge.js` — bridge read-only con agenda4.0
+- `server/services/analysis/tagger.js` — tags automáticos por LLM
+- `server/services/analysis/scorer.js` — lead scoring automático
+- `client/src/index.css` — design system completo (editar `:root` para cambiar el look)
 
-### 2. Conversaciones + Tags
-- Almacena todo mensaje WhatsApp en `messages`
-- Tags automáticos por LLM: intent, sentiment, objection, stage, behavior, quality
-- Tabla `tags` polimórfica (target_type + target_id)
+## DB Schema (16 tablas)
+`tenants` · `admin_users` · `contacts` · `leads` · `venues` · `workshops` · `conversations` · `messages` · `tags` · `transactions` · `financial_goals` · `enrollments` · `campaigns` · `followup_queue` · `activity_log` · `whatsapp_users`
 
-### 3. CRM de leads
-- Tabla `leads` con scoring automático
-- Status: new → qualifying → qualified → negotiating → converted | lost
-- Lead scoring por reglas + señales del LLM
+## Modelo de datos WhatsApp
+- `leads` — entidad principal, tiene `phone`
+- `conversations` / `messages` — con columna `bsuid`
+- `whatsapp_users` — identidad: `bsuid ↔ phone ↔ lead_id`
 
-### 4. Finanzas
-- Tabla `transactions` unifica ingresos y gastos
-- `financial_goals` por período
-- Integración con Agenda 4.0 para ingresos de terapia individual
-- Balance items (activos, pasivos)
-- Los pagos de talleres confirmados por OCR se registran como `transactions` verificadas
+## Regla de deploy operativa
+Al cerrar cualquier sesión con cambios en `client/src/`:
+1. `cd client && npm run build`
+2. Commitear `client/dist/`
+3. Avisar al usuario antes de hacer push
 
-### 5. Marketing / Publicidad
-- Catálogo de talleres (`workshops`) como productos
-- `campaigns` con tracking de leads y conversiones
-- registro de ingresos atribuidos por campaña
-- Generador de copy con LLM (Groq/DeepSeek)
-- Futuro: Meta Graph API para posts directos
+## Variables de entorno clave
+`GROQ_API_KEY` · `DEEPSEEK_API_KEY` · `GOOGLE_VISION_API_KEY` · `PUSHINATOR_TOKEN` · `PUSHINATOR_CHANNEL_ID` · `TELEGRAM_BOT_TOKEN` · `WA_TOKEN` · `WA_PHONE_ID` · `JWT_SECRET` · `DB_*` · `AGENDA_DB_*`
 
-### 6. Insights / Métricas
-- Embudo de conversión
-- ROI por campaña
-- Análisis de objeciones (datos del LLM)
-- Comparativa por taller
-- Consolidado con Agenda 4.0
-
-## Estado funcional añadido en sesión 2
-- `server/services/chatbot/llm.js` — integración Groq OpenAI-compatible con fallback si no hay key
-- `server/services/analysis/tagger.js` — tags automáticos por mensaje inbound (`intent`, `sentiment`, `quality`)
-- `server/services/analysis/scorer.js` — scoring automático de leads
-- `server/routes/finance.js` — CRUD de transacciones + resumen mensual + meta mensual
-- `GET /api/analytics/funnel` — embudo y top fuentes
-- `client/src/pages/Finance.jsx` — página funcional para registrar y filtrar ingresos/gastos
-- `client/src/pages/Insights.jsx` — embudo visual y top fuentes
-- Chatbot: en fase `interested`, preguntas libres usan Groq si está disponible
-- Chatbot: botón `inscribir_<id>` ahora crea/actualiza enrollment pendiente y responde confirmando interés
-
-## Estado funcional añadido en sesión 3
-- Login actualizado a `username + PIN`
-- `GET /api/auth/me` para rehidratar usuario autenticado
-- Nuevo módulo `server/routes/team.js`
-- `client/src/pages/Settings.jsx` ya no es placeholder: ahora gestiona equipo interno
-- `admin_users` soporta `display_name` y `active`
-- Las conversaciones pueden asignarse manualmente a usuarios internos
-- Sidebar muestra usuario y rol activos
-- La lista de conversaciones muestra a quién está asignado cada chat
-- `GET /api/leads/stats/summary` quedó corregido en el orden de rutas
-
-## Estado funcional añadido en sesión 4
-- `server/routes/settings.js` gestiona opciones de cobro y subida de QR
-- Hay 4 slots de cobro configurables por instalación:
-  - etiqueta
-  - monto
-  - activo/inactivo
-  - imagen QR
-- Se pueden usar etiquetas como `Precio constelar` y `Precio participar`
-- `tenants` ahora guarda:
-  - `payment_options`
-  - `payment_destination_accounts`
-  - `payment_qr_1..4`
-- `server/services/ocr.js` integra Google Vision para comprobantes
-- `server/services/chatbot/paymentWorkflow.js` maneja:
-  - selección de opción de cobro
-  - envío de QR por Telegram
-  - contexto de pago en conversación
-  - validación OCR del comprobante
-- Reglas OCR heredadas de agenda4.0:
-  - destinatario/cuenta destino válida
-  - monto correcto
-  - fecha del comprobante no anterior al último QR enviado
-- `client/src/pages/Settings.jsx` ya permite subir los 4 QR y definir cuentas destino válidas
-
-## Estado funcional añadido en sesión 5
-- Nuevo módulo `server/routes/enrollments.js`
-- Nuevo servicio `server/services/enrollments.js`
-- `server/index.js` ahora expone `/api/enrollments`
-- `client/src/pages/Workshops.jsx` ahora incluye una vista operativa de inscripciones dentro del módulo de talleres
-- La vista de inscripciones permite filtrar por:
-  - taller
-  - estado de revisión
-  - asignado
-  - búsqueda por lead o taller
-- Estados operativos visibles:
-  - pendiente
-  - comprobante recibido
-  - mismatch
-  - confirmado
-- Acciones manuales disponibles desde admin:
-  - confirmar pago
-  - rechazar comprobante
-  - reenviar QR
-  - reenviar instrucciones
-- La confirmación manual:
-  - confirma `enrollment`
-  - crea o actualiza `transactions`
-  - convierte lead y conversación
-  - sincroniza `current_participants` del taller
-- El rechazo manual:
-  - conserva historial
-  - agrega `mismatch_manual` a `ocr_data.validation_problems`
-  - mantiene el enrollment en revisión operativa
-- El workflow OCR automático ahora también sincroniza `current_participants` cuando valida un pago
-
-## Estado funcional añadido en sesión 23
-- `Configuración` ahora tiene un toggle `Modo prueba de comprobantes`
-- Se guarda dentro de `features_enabled.payment_proof_debug_mode` del tenant
-- Vive en el mismo bloque de `Cobros, QR y OCR`
-- Cuando está activo:
-  - cualquier imagen o documento que llegue al bot se procesa como prueba de comprobante
-  - no depende de `nodo_10_espera_pago`
-  - no depende de la fase de conversación
-  - el bot responde con diagnóstico OCR:
-    - monto detectado
-    - fecha y hora
-    - nombre y banco
-    - cuenta/destinatario detectados
-    - si la cuenta coincide con las cuentas válidas configuradas
-    - si existe un QR activo en la conversación, también indica si pasaría o fallaría la validación automática
-- Importante:
-  - en este modo se prioriza el diagnóstico sobre el flujo normal
-  - sirve para pruebas operativas de OCR y mensajes de error sin depender del embudo
-- Archivos principales:
-  - `server/services/paymentOptions.js`
-  - `server/routes/settings.js`
-  - `server/services/chatbot/paymentWorkflow.js`
-  - `server/services/chatbot/flowEngine.js`
-  - `client/src/pages/Settings.jsx`
-  - `client/src/index.css`
-
-## Estado funcional añadido en sesión 24
-- El toggle de pruebas OCR en `Configuración` fue corregido para que sea realmente intuitivo y operativo
-- Ya no usa checkbox ambiguo ni depende del botón general `Guardar configuración de cobro`
-- Ahora:
-  - se ve como switch visual
-  - el label principal es `Activar pruebas de OCR`
-  - muestra estado claro `Pruebas OCR activas` / `Pruebas OCR desactivadas`
-  - guarda inmediatamente al hacer click
-- Backend:
-  - nuevo endpoint `PUT /api/settings/payment-proof-debug-mode`
-  - actualiza solo `features_enabled.payment_proof_debug_mode`
-  - evita mezclar este cambio con otros ajustes de cobro no guardados
-
-## Estado funcional añadido en sesión 25
-- `server/routes/webhook.js` ahora protege contra silencio total del bot
-- Si `processIncomingMessage()` falla al procesar una imagen, documento o comprobante:
-  - loggea el stack completo
-  - intenta responder al usuario:
-    - `Hubo un error procesando tu mensaje o comprobante. Intenta reenviarlo en unos segundos.`
-- Objetivo:
-  - que un error interno ya no se vea como “el bot no hizo nada”
-
-## Estado funcional añadido en sesión 6
-- Nuevo servicio `server/services/adminEvents.js` para Server-Sent Events admin
-- `server/index.js` ahora expone `GET /api/admin/events`
-- La app ya soporta actualización en vivo en:
-  - Leads
-  - Conversaciones / Inbox
-  - Finanzas
-- `conversations` ahora soporta:
-  - `inbox_state` (`open`, `pending`, `resolved`)
-  - `internal_notes`
-- El inbox admin ya permite:
-  - filtrar por estado comercial
-  - filtrar por estado operativo del inbox
-  - filtrar por asignado
-  - buscar por lead o taller
-  - guardar notas internas
-  - cambiar estado operativo
-  - enviar mensajes manuales desde el panel
-- Al entrar un mensaje inbound:
-  - la conversación vuelve a `open`
-  - se emiten eventos admin en vivo
-- Al enviar mensaje manual desde admin:
-  - se manda por Telegram
-  - se guarda en `messages`
-  - la conversación pasa a `pending`
-  - se autoasigna al operador si estaba en `bot`
-- `server/services/chatbot/engine.js` ahora actualiza `last_message_at` también en outbound
-- Leads y Finanzas escuchan eventos en vivo y recargan sin refresh manual
-
-## Estado funcional añadido en sesión 7
-- `server/routes/enrollments.js` ahora soporta:
-  - `GET /api/enrollments/:id`
-  - `GET /api/enrollments/:id/proof`
-- `server/services/enrollments.js` ahora expone:
-  - `getEnrollmentProofAsset`
-  - `getReviewState`
-- La revisión de OCR/pagos en `client/src/pages/Workshops.jsx` ahora muestra:
-  - ficha detallada por inscripción
-  - monto esperado vs monto detectado
-  - fecha, cuenta, banco, referencia
-  - lista de reglas fallidas
-  - texto OCR crudo
-  - apertura/descarga del comprobante
-  - confirmación manual con monto corregido
-- `client/src/pages/Leads.jsx` ahora funciona como CRM con ficha lateral:
-  - datos del lead
-  - tags
-  - notas
-  - resumen de conversaciones
-  - resumen de inscripciones
-  - timeline consolidado de mensajes, enrollments y transacciones
-- `server/routes/leads.js` ahora devuelve en detalle:
-  - `enrollments`
-  - `transactions`
-  - `timeline`
-
-## Estado funcional añadido en sesión 8
-- Nuevo servicio `server/services/activityLog.js`
-- `server/routes/auth.js` ahora soporta `POST /api/auth/change-pin`
-- `server/routes/team.js` ahora quedó más estricto:
-  - admins no pueden gestionar owners
-  - solo owners pueden crear/promover owners
-  - no se puede desactivar o eliminar la propia cuenta
-  - no se puede dejar la instalación sin al menos un owner activo
-  - si cambia el username de un usuario, se sincroniza `conversations.assigned_to`
-  - si se elimina un usuario, sus conversaciones asignadas vuelven a `bot`
-- `client/src/pages/Settings.jsx` ahora permite:
-  - cambiar tu propio PIN
-  - editar usuarios existentes
-  - cambiar username, nombre visible, rol y estado
-  - resetear PIN de otro usuario
-  - ver descripciones claras de roles
-  - ver bitácora reciente del equipo
-- `client/src/hooks/useAuth.js` y `client/src/utils/api.js` ahora rehidratan en vivo el usuario actual si se edita su propio perfil desde Settings
-
-## Estado funcional añadido en sesión 9
-- `server/routes/marketing.js` ahora ya soporta CRUD completo de campañas y resumen:
-  - `GET /api/marketing/summary`
-  - `GET /api/marketing`
-  - `POST /api/marketing`
-  - `PUT /api/marketing/:id`
-  - `DELETE /api/marketing/:id`
-- `campaigns` ahora soporta `revenue_generated`
-- `client/src/pages/Marketing.jsx` dejó de ser placeholder:
-  - KPIs de inversión, ingresos atribuidos, resultado, ROI, CPL y CPA
-  - formulario operativo de campañas
-  - filtros por estado, plataforma y búsqueda
-  - tabla de campañas con edición y borrado
-  - resumen por plataforma
-- `server/services/agendaBridge.js` crea un bridge read-only con Agenda 4.0:
-  - puede tomar config desde env vars `AGENDA_DB_*`
-  - si no existe, intenta leer `/Users/dran/Documents/Codex openai/agenda4.0/.env`
-  - busca clientes, citas y pagos
-- `server/routes/agenda.js` expone:
-  - `GET /api/agenda/status`
-  - `GET /api/agenda/search`
-  - `GET /api/agenda/lead/:leadId`
-- `server/routes/leads.js` ahora soporta CRM más serio:
-  - quick views por `view=hot|followup|converted|agenda_pending`
-  - `POST /api/leads/:id/tags` para tags manuales
-  - `DELETE /api/leads/:id/tags/:tagId` para quitar tags manuales
-  - `PUT /api/leads/:id/agenda-link` para vincular o desvincular con Agenda 4.0
-- `client/src/pages/Leads.jsx` ahora suma:
-  - vistas rápidas
-  - tags manuales editables
-  - panel de cruce con Agenda 4.0
-  - búsqueda y vinculación manual de cliente de Agenda
-  - resumen de citas y pagos del cliente vinculado
-
-## Estado funcional añadido en sesión 10
-- `client/src/pages/Conversations.jsx` ahora hace auto-scroll al final del hilo al cargar mensajes o cambiar de conversación
-- `client/src/index.css` endurece el layout de inbox para navegadores sensibles a grid/flex:
-  - `min-height: 0` en paneles con scroll
-  - `overscroll-behavior: contain` en lista y thread
-- Verificación operativa hecha en producción:
-  - `GET /api/health` responde `200`
-  - `GET /api/conversations?limit=5` responde correctamente
-  - la conversación de Telegram seguía registrando mensajes y respuesta del bot a las `02:46` hora Bolivia del `2026-04-09`
-  - `getWebhookInfo` de Telegram reportó `pending_update_count: 0`
-- Conclusión de sesión 10:
-  - no hubo evidencia de caída del webhook
-  - el fix aplicado fue sobre robustez del módulo `Conversaciones`
-
-## Estado funcional añadido en sesión 11
-- `client/src/pages/Conversations.jsx` ahora fuerza orden descendente por `last_message_at` / `started_at`
-- la lista de conversaciones se resetea arriba al recargar para dejar siempre las más recientes al tope
-- `client/src/index.css` endurece todavía más el scroll de la lista:
-  - `height: 100%`
-  - `overflow-x: hidden`
-  - `-webkit-overflow-scrolling: touch`
-  - `touch-action: pan-y`
-  - uso de `100dvh` para altura real del panel
-- objetivo de sesión 11:
-  - corregir lista de conversaciones “trancada”
-  - asegurar que las más nuevas queden arriba y las más antiguas abajo
-
-## Estado funcional añadido en sesión 12
-- hallazgo de producción:
-  - el taller `Constel Work` existía pero estaba en estado `draft`
-  - el chatbot solo ofrece talleres `planned` u `open`
-- `client/src/pages/Workshops.jsx` ahora crea talleres nuevos con estado por defecto `planned`
-- la UI de talleres ahora explica explícitamente:
-  - el chatbot solo muestra talleres en estado Planificado o Inscripciones abiertas
-- `server/routes/workshops.js` también cambia el default backend de creación a `planned`
-
-## Estado funcional añadido en sesión 13
-- Nuevo módulo admin `Embudo`:
-  - `client/src/pages/Funnel.jsx`
-  - ruta `/funnel`
-  - ítem en sidebar entre Conversaciones y Leads
-- Nuevo schema conversacional:
-  - tabla `flow_nodes`
-  - tabla `flow_sessions`
-  - seed inicial automático del flujo base para `tenant_id = 1` si `flow_nodes` está vacía
-- Nuevo backend admin:
-  - `server/routes/funnel.js`
-  - `GET /api/funnel/nodes`
-  - `POST /api/funnel/nodes`
-  - `PUT /api/funnel/nodes/:id`
-  - `DELETE /api/funnel/nodes/:id`
-  - `GET /api/funnel/sessions`
-  - `GET /api/funnel/sessions/:id`
-- Nuevo motor `server/services/chatbot/flowEngine.js`:
-  - reemplaza el webhook hardcodeado actual de Telegram
-  - inicia sesión en el nodo de menor `position`
-  - soporta `message`, `open_question_ai`, `open_question_detect`, `options`, `action`
-  - guarda contexto en `flow_sessions.context`
-  - reemplaza placeholders `[FECHA]`, `[VENUE]`, `[HORA_INICIO]`, `[HORA_FIN]` con el taller más próximo `planned/open`
-  - crea lead automáticamente al responder `nodo_02` y lo pasa a `qualifying`
-  - emite SSE `funnel_session_update` en cada cambio de nodo
-  - si un `node_key` referenciado no existe, loggea y escala automáticamente
-- Integraciones del embudo:
-  - `send_qr` reutiliza `payment_options` del tenant y `paymentWorkflow`
-  - `process_payment_proof` reutiliza OCR + confirmación de pagos existente
-  - `check_workshop_capacity` valida cupos para constelar
-  - `escalate` marca conversación como `escalated`, sesión como `escalated` y dispara Pushinator si hay config
-- Nuevo servicio `server/services/pushinator.js`
-  - usa `PUSHINATOR_API_TOKEN` / `PUSHINATOR_CHANNEL_ID` o `tenant.push_config`
-  - si faltan credenciales, falla de forma tolerante sin romper el bot
-- `client/src/pages/Conversations.jsx` ahora acepta `?conversationId=` para deep-link desde Embudo
-
-## Estado funcional añadido en sesión 14
-- Ajuste operativo en talleres:
-  - `server/routes/workshops.js` crea talleres nuevos con default `planned` en vez de `draft`
-  - `client/src/pages/Workshops.jsx` refleja ese default y muestra una nota aclarando que el bot/embudo solo ofrece talleres `planned` u `open`
-
-## Estado funcional añadido en sesión 15
-- Ajuste visual global de tipografía:
-  - se subieron `+2px` los tokens tipográficos base en `client/src/index.css`
-  - aplica igual a tema claro y oscuro porque ambos consumen la misma escala desde `:root`
-  - no se tocaron colores, layout estructural ni lógica
-
-## Estado funcional añadido en sesión 16
-- Correcciones puntuales de server sobre bugs operativos:
-  - `server/services/chatbot/flowEngine.js` ya no degrada enrollments confirmados al reingresar por el embudo
-  - `server/routes/workshops.js` expone correctamente `GET /api/workshops/venues/list` antes de `/:id`
-  - `server/routes/webhook.js` y `server/services/channels/telegram.js` ahora usan `secret_token` para proteger el webhook de Telegram
-  - `server/routes/auth.js` ahora:
-    - exige seleccionar usuario si hay más de un admin activo
-    - limita intentos de login con `express-rate-limit`
-  - `server/middleware/tenant.js` ya no cachea los BLOBs de QR del tenant
-  - `server/routes/workshops.js` conserva `price: 0` y `early_bird_price: 0` en creación
-
-## Estado funcional añadido en sesión 17
-- Corrección del módulo `Configuración`:
-  - `client/src/pages/Settings.jsx` ya no pisa cambios locales del formulario de cobros cuando termina una carga tardía o cuando se sube un QR
-  - al subir un QR solo se refresca `has_qr`, sin resetear etiquetas, montos ni cuentas destino que el usuario aún no guardó
-  - se agregó feedback visual de estado:
-    - `Cambios guardados`
-    - `Hay cambios sin guardar`
-    - confirmación explícita cuando el guardado fue exitoso
-- `client/src/index.css` suma estilos para avisos inline en Configuración
-
-## Estado funcional añadido en sesión 18
-- Ajuste operativo sobre Telegram de pruebas:
-  - se retiró la validación obligatoria de `secret_token` del webhook en `server/routes/webhook.js`
-  - `server/services/channels/telegram.js` volvió a registrar el webhook sin `secret_token`
-  - motivo: Telegram se usa solo como canal de prueba y la validación estaba dejando el bot mudo si el webhook no se había reconfigurado
-
-## Estado funcional añadido en sesión 19
-- Nuevo módulo `Contacts`:
-  - tabla `contacts` en `server/db.js`
-  - `leads` ahora soporta `contact_id` y `deleted_at`
-  - nueva ruta `server/routes/contacts.js`
-  - nueva página `client/src/pages/Contacts.jsx`
-- Nuevo helper `server/services/nameClassifier.js`:
-  - clasifica `wa_name` en `nombre_completo`, `nombre_parcial` o `sin_nombre`
-- `server/services/agendaBridge.js` ahora expone `findByPhone(phone)` para reconocimiento liviano contra Agenda 4.0
-- `server/services/chatbot/flowEngine.js` ahora:
-  - busca o crea `contact` por teléfono al entrar un mensaje
-  - vincula el `lead.contact_id` si faltaba
-  - decide el nodo de entrada según `contact.label`
-  - puede saltar directo a `nodo_06_presentacion` para `cliente` / `cliente_agenda`
-  - usa `greeting_override` en el primer mensaje de la sesión
-  - agrega `groq_context` al system prompt de nodos `open_question_ai`
-- Deletes y UI destructiva:
-  - `server/routes/leads.js` ahora hace soft-delete y abandona `flow_sessions`
-  - `server/routes/conversations.js` ahora soporta hard delete de conversación + mensajes + tags de conversación
-  - nuevo `client/src/components/ui/ConfirmButton.jsx`
-  - acciones destructivas existentes migradas a confirmación de doble click
-
-## Estado funcional añadido en sesión 20
-- Tags automáticos corregidos:
-  - `server/services/analysis/tagger.js` ahora separa:
-    - tags de estado (`quality`, `sentiment`) → reemplazan el anterior
-    - tags de comportamiento (`intent`) → se acumulan sin duplicar
-  - ya no se crean tags sobre `target_type = 'message'`
-- `server/services/chatbot/flowEngine.js` ahora solo corre el tagger cuando:
-  - es el primer mensaje de una sesión nueva
-  - la sesión cambió de nodo
-  - esto se controla con `context.tag_on_next`
-- Nuevo endpoint operativo:
-  - `GET /api/admin/cleanup-tags`
-  - limpia duplicados históricos de `quality`, `sentiment`, `intent`
-  - borra tags viejos por mensaje
-- `server/services/pushinator.js` quedó estandarizado:
-  - env var canónica: `PUSHINATOR_TOKEN`
-  - env var de canal: `PUSHINATOR_CHANNEL_ID`
-  - config tenant: `api_token`, `channel_id`
-
-## Estado funcional añadido en sesión 21
-- Se reconstruyó `client/dist/` después de las sesiones de `Contacts` y `tags`
-- Motivo:
-  - Hostinger sirve `client/dist`
-  - los cambios ya estaban en `client/src` pero todavía no estaban empaquetados en producción
-- Resultado:
-  - `Contacts` quedó visible en el bundle desplegable
-  - también entraron al build los cambios de `ConfirmButton` y navegación lateral
-
-## Regla operativa de deploy
-- Este proyecto despliega desde `main` para Hostinger
-- **NUNCA abrir branches.** Todo va directo a `main`. Sin excepciones salvo pedido explícito del usuario.
-- Si hay cambios locales no committeados al inicio de una sesión, commitearlos a `main` o hacer stash. NUNCA crear una branch para aislarlos.
-- Cuando se haga un cambio en `client/src/`, al final de la sesión SIEMPRE:
-  1. Correr `cd client && npm run build`
-  2. Commitear `client/dist/`
-  3. Avisar al usuario que el build está listo para push
-- Si las instrucciones dicen "no hacer build", avisar explícitamente: "los cambios de frontend no se verán en producción hasta que se haga build y push"
-- Cuando se haga un cambio funcional, actualizar también `CLAUDE.md` y `HANDOFF.md` en la misma sesión
-
-## Estado funcional añadido en sesión 22
-- Se corrigió el bug crítico del comprobante en `server/services/chatbot/flowEngine.js`
-- Causa:
-  - `paymentWorkflow` esperaba un adapter con método `getMedia()`
-  - `runFlowEngine` estaba recibiendo `incoming.channel` como string (`telegram`)
-- Fix aplicado:
-  - `processIncomingMessage()` ahora inyecta `incoming: { ...incoming, channel: channelAdapter }`
-  - eso vuelve a habilitar descarga de imagen y OCR en `nodo_11_ocr`
-- UI:
-  - `ConfirmButton` ahora usa el design system (`.btn`, `.btn-secondary`, `.btn-danger`)
-  - tiene ícono de basurero, estado de confirmación rojo y variante `size="sm"`
-  - ya no quedan `window.confirm()` ni `confirm()` en `client/src`
-- Selección masiva añadida en:
-  - `Contacts`
-  - `Leads`
-  - `Conversations`
-  - `Workshops`
-  - `Marketing`
-  - `Finance`
-- Componentes nuevos:
-  - `client/src/hooks/useSelection.js`
-  - `client/src/components/ui/BulkActionBar.jsx`
-- `Conversations` ahora:
-  - permite eliminar conversaciones individualmente o en lote
-  - ordena visualmente tags por prioridad `quality -> sentiment -> intent`
-  - muestra máximo 4 tags y luego badge `+N`
-- `GET /api/admin/cleanup-tags` ya existía y se mantuvo como endpoint operativo
-- `client/dist/` fue reconstruido para Hostinger al final de la sesión
-
-### 7. Comandos rápidos
-- Acciones sobre leads: follow-up, cobrar, escalar, descartar
-- Acciones sobre talleres: broadcast, recordatorio, clonar
-
-### 8. Catálogo de talleres
-- CRUD de talleres con venues, precios, fechas
-- Enrollments (inscripciones) con status
-- Waitlist automática cuando se llena
-
-## Estructura de archivos
-```
-business-os/
-├── server/
-│   ├── index.js
-│   ├── db.js                     (MySQL pool + schema + helpers)
-│   ├── routes/                   (thin routes)
-│   ├── services/                 (business logic)
-│   │   ├── chatbot/              (engine, llm, qualify, prompts)
-│   │   └── analysis/             (tagger, scorer, insights)
-│   ├── middleware/               (auth, tenant, validate)
-│   └── cron/                     (followups, reminders, sync)
-├── client/
-│   ├── src/
-│   │   ├── index.css             (design system — CSS custom properties)
-│   │   ├── pages/                (una por módulo)
-│   │   ├── components/           (ui/, layout/, por-módulo/)
-│   │   ├── hooks/
-│   │   └── utils/
-│   └── vite.config.js
-├── CLAUDE.md                     (este archivo)
-├── HANDOFF.md                    (log de progreso para continuidad entre IAs)
-└── package.json
-```
-
-## DB Schema (15 tablas)
-1. `tenants` — config multi-tenant
-2. `admin_users` — login admin
-3. `venues` — lugares para talleres
-4. `workshops` — talleres como productos
-5. `leads` — CRM
-6. `playbooks` — embudos conversacionales
-7. `conversations` — hilos de conversación
-8. `messages` — mensajes individuales
-9. `tags` — clasificación polimórfica
-10. `transactions` — ingresos y gastos
-11. `financial_goals` — metas por período
-12. `enrollments` — inscripciones a talleres
-13. `campaigns` — tracking de publicidad
-14. `followup_queue` — secuencias de seguimiento
-15. `activity_log` — auditoría
+## Approach
+- Think before acting. Read existing files before writing code.
+- Be concise in output but thorough in reasoning.
+- Prefer editing over rewriting whole files.
+- Do not re-read files you have already read unless the file may have changed.
+- Test your code before declaring done.
+- No sycophantic openers or closing fluff.
+- Keep solutions simple and direct.
+- User instructions always override this file.

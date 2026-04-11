@@ -34,6 +34,9 @@ const TAG_CLASSES = {
 export default function Conversations() {
   const [searchParams] = useSearchParams()
   const [conversations, setConversations] = useState([])
+  const [resumeNodes, setResumeNodes] = useState([])
+  const [resumeNodeKey, setResumeNodeKey] = useState('')
+  const [resumingBot, setResumingBot] = useState(false)
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('')
   const [assignedFilter, setAssignedFilter] = useState('')
@@ -113,6 +116,18 @@ export default function Conversations() {
   }, [])
 
   useEffect(() => {
+    apiGet('/api/funnel/nodes')
+      .then((items) => {
+        const sorted = [...(Array.isArray(items) ? items : [])]
+          .sort((left, right) => Number(left.position || 0) - Number(right.position || 0))
+        startTransition(() => {
+          setResumeNodes(sorted)
+        })
+      })
+      .catch(() => setResumeNodes([]))
+  }, [])
+
+  useEffect(() => {
     if (requestedConversationId && conversations.some((item) => item.id === requestedConversationId) && selectedId !== requestedConversationId) {
       setSelectedId(requestedConversationId)
       return
@@ -139,6 +154,10 @@ export default function Conversations() {
   useEffect(() => {
     setNoteDraft(selected?.internal_notes || '')
   }, [selected?.id, selected?.internal_notes])
+
+  useEffect(() => {
+    setResumeNodeKey('')
+  }, [selected?.id])
 
   useEffect(() => {
     const node = conversationsListRef.current
@@ -220,6 +239,21 @@ export default function Conversations() {
       alert(err.message)
     } finally {
       setSendingMessage(false)
+    }
+  }
+
+  async function handleResumeBot() {
+    if (!selected) return
+    setResumingBot(true)
+    try {
+      await apiPost(`/api/conversations/${selected.id}/resume-bot`, {
+        node_key: resumeNodeKey || null,
+      })
+      await Promise.all([loadConversations(), loadMessages(selected.id)])
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setResumingBot(false)
     }
   }
 
@@ -430,6 +464,35 @@ export default function Conversations() {
                           </option>
                         ))}
                       </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Reanudar bot</label>
+                      <div className="bot-resume-panel">
+                        <select
+                          className="input"
+                          value={resumeNodeKey}
+                          onChange={(e) => setResumeNodeKey(e.target.value)}
+                        >
+                          <option value="">Automático · seguir donde se quedó</option>
+                          {resumeNodes.map((node) => (
+                            <option key={node.id} value={node.node_key}>
+                              {node.name || node.node_key}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="text-xs text-muted">
+                          Si eliges un nodo, el bot retoma desde ahí y envía el siguiente mensaje de inmediato.
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={handleResumeBot}
+                          disabled={resumingBot}
+                        >
+                          {resumingBot ? 'Reanudando...' : 'Reanudar bot'}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="form-group">

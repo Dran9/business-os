@@ -36,6 +36,14 @@ const TAG_CLASSES = {
   custom: 'tag tag-custom',
 }
 
+const CONVERSATION_STATUS_LABELS = {
+  active: 'Activa',
+  converted: 'Convertida',
+  lost: 'Perdida',
+  escalated: 'Escalada',
+  dormant: 'Dormida',
+}
+
 const VIEW_OPTIONS = [
   { value: '', label: 'Todos' },
   { value: 'hot', label: 'Calientes' },
@@ -68,6 +76,10 @@ const SIGNAL_TAG_ORDER = ['intent', 'objection', 'behavior', 'custom']
 
 export default function Leads() {
   const [leads, setLeads] = useState([])
+  const [resumeNodes, setResumeNodes] = useState([])
+  const [resumeConversationId, setResumeConversationId] = useState('')
+  const [resumeNodeKey, setResumeNodeKey] = useState('')
+  const [resumingBot, setResumingBot] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [filter, setFilter] = useState('')
@@ -144,6 +156,18 @@ export default function Leads() {
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
+    apiGet('/api/funnel/nodes')
+      .then((items) => {
+        const sorted = [...(Array.isArray(items) ? items : [])]
+          .sort((left, right) => Number(left.position || 0) - Number(right.position || 0))
+        startTransition(() => {
+          setResumeNodes(sorted)
+        })
+      })
+      .catch(() => setResumeNodes([]))
+  }, [])
+
+  useEffect(() => {
     if (!selectedId && leads.length > 0) {
       setSelectedId(leads[0].id)
       return
@@ -191,6 +215,29 @@ export default function Leads() {
   const leadTagSummary = useMemo(() => summarizeLeadTags(selectedLead?.tags || []), [selectedLead?.tags])
   const visibleLeadIds = useMemo(() => leads.map((lead) => lead.id), [leads])
   const allLeadsSelected = visibleLeadIds.length > 0 && visibleLeadIds.every((id) => selection.isSelected(id))
+  const preferredResumeConversation = useMemo(
+    () => pickResumeConversation(selectedLead?.conversations || []),
+    [selectedLead?.conversations]
+  )
+  const selectedResumeConversation = useMemo(
+    () => (selectedLead?.conversations || []).find((conversation) => String(conversation.id) === String(resumeConversationId)) || null,
+    [resumeConversationId, selectedLead?.conversations]
+  )
+
+  useEffect(() => {
+    const conversations = selectedLead?.conversations || []
+    if (conversations.length === 0) {
+      setResumeConversationId('')
+      return
+    }
+    if (!resumeConversationId || !conversations.some((conversation) => String(conversation.id) === String(resumeConversationId))) {
+      setResumeConversationId(String(preferredResumeConversation?.id || conversations[0].id))
+    }
+  }, [preferredResumeConversation?.id, resumeConversationId, selectedLead?.id, selectedLead?.conversations])
+
+  useEffect(() => {
+    setResumeNodeKey('')
+  }, [resumeConversationId, selectedLead?.id])
 
   async function handleTagSubmit(event) {
     event.preventDefault()
@@ -274,6 +321,21 @@ export default function Leads() {
       await load()
     } catch (err) {
       alert(err.message)
+    }
+  }
+
+  async function handleResumeBot() {
+    if (!resumeConversationId) return
+    setResumingBot(true)
+    try {
+      await apiPost(`/api/conversations/${resumeConversationId}/resume-bot`, {
+        node_key: resumeNodeKey || null,
+      })
+      await Promise.all([load(), loadLeadDetail(selectedId)])
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setResumingBot(false)
     }
   }
 
@@ -408,6 +470,53 @@ export default function Leads() {
                     <LeadMeta label="Último contacto" value={selectedLead.last_contact_at ? timeAgo(selectedLead.last_contact_at) : '—'} />
                     <LeadMeta label="Ingresos" value={formatCurrency(totals.income)} />
                     <LeadMeta label="Inscripciones" value={String(selectedLead.enrollments?.length || 0)} />
+                  </div>
+                  <div className="mt-4">
+                    <div className="text-sm font-semibold">Reanudar bot</div>
+                    {(selectedLead.conversations || []).length === 0 ? (
+                      <div className="text-sm text-muted mt-1">
+                        Este lead todavía no tiene conversaciones para reactivar.
+                      </div>
+                    ) : (
+                      <div className="bot-resume-panel mt-2">
+                        <select
+                          className="input"
+                          value={resumeConversationId}
+                          onChange={(event) => setResumeConversationId(event.target.value)}
+                        >
+                          {(selectedLead.conversations || []).map((conversation) => (
+                            <option key={conversation.id} value={conversation.id}>
+                              {formatResumeConversationLabel(conversation)}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className="input"
+                          value={resumeNodeKey}
+                          onChange={(event) => setResumeNodeKey(event.target.value)}
+                        >
+                          <option value="">Automático · seguir donde se quedó</option>
+                          {resumeNodes.map((node) => (
+                            <option key={node.id} value={node.node_key}>
+                              {node.name || node.node_key}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="text-xs text-muted">
+                          {selectedResumeConversation
+                            ? `Se reactivará ${selectedResumeConversation.workshop_name || 'General'} · ${CONVERSATION_STATUS_LABELS[selectedResumeConversation.status] || selectedResumeConversation.status || 'sin estado'}.`
+                            : 'Elige la conversación correcta si este lead habló por más de un taller.'}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={handleResumeBot}
+                          disabled={resumingBot || !resumeConversationId}
+                        >
+                          {resumingBot ? 'Reanudando...' : 'Reanudar bot'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="tag-section mt-4">
                     <div className="text-sm font-semibold">Tags</div>
@@ -757,6 +866,28 @@ function compareTagCategory(order) {
     if (normalizedLeft !== normalizedRight) return normalizedLeft - normalizedRight
     return compareTagRecency(left, right)
   }
+}
+
+function conversationSortTime(conversation) {
+  return new Date(conversation?.last_message_at || conversation?.started_at || 0).getTime()
+}
+
+function pickResumeConversation(conversations) {
+  const items = Array.isArray(conversations) ? [...conversations] : []
+  items.sort((left, right) => {
+    const leftRank = left.status === 'escalated' ? 0 : left.status === 'active' ? 1 : 2
+    const rightRank = right.status === 'escalated' ? 0 : right.status === 'active' ? 1 : 2
+    if (leftRank !== rightRank) return leftRank - rightRank
+    return conversationSortTime(right) - conversationSortTime(left)
+  })
+  return items[0] || null
+}
+
+function formatResumeConversationLabel(conversation) {
+  const workshop = conversation.workshop_name || 'General'
+  const status = CONVERSATION_STATUS_LABELS[conversation.status] || conversation.status || 'sin estado'
+  const activity = conversation.last_message_at || conversation.started_at
+  return `${workshop} · ${status} · ${activity ? timeAgo(activity) : 'sin actividad'}`
 }
 
 function formatLeadTag(tag) {

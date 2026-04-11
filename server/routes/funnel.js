@@ -5,7 +5,7 @@ const { query } = require('../db');
 const { getCurrentNodeEnteredAt } = require('../services/chatbot/flowEngine');
 
 const router = express.Router();
-const NODE_TYPES = new Set(['message', 'open_question_ai', 'open_question_detect', 'options', 'action']);
+const NODE_TYPES = new Set(['message', 'open_question_ai', 'open_question_detect', 'options', 'action', 'capture_data']);
 
 function requireManager(req, res, next) {
   if (!['owner', 'admin'].includes(req.user?.role)) {
@@ -33,6 +33,7 @@ function normalizeNode(row) {
     ...row,
     keywords: parseJson(row.keywords, []),
     options: parseJson(row.options, []),
+    capture_field: row.capture_field || null,
   };
 }
 
@@ -56,6 +57,7 @@ function validateNodePayload(body, { isCreate = false } = {}) {
     next_node_key: body?.next_node_key ? String(body.next_node_key).trim() : null,
     keyword_match_next: body?.keyword_match_next ? String(body.keyword_match_next).trim() : null,
     keyword_nomatch_next: body?.keyword_nomatch_next ? String(body.keyword_nomatch_next).trim() : null,
+    capture_field: body?.capture_field ? String(body.capture_field).trim() : null,
     action_type: body?.action_type ? String(body.action_type).trim() : null,
     position: Number(body?.position ?? 0),
     active: body?.active !== false,
@@ -81,6 +83,9 @@ function validateNodePayload(body, { isCreate = false } = {}) {
   }
   if (payload.type === 'options' && !Array.isArray(payload.options)) {
     throw new Error('options debe ser un array para options');
+  }
+  if (payload.type === 'capture_data' && !payload.capture_field) {
+    throw new Error('capture_field es requerido para capture_data');
   }
 
   return payload;
@@ -121,8 +126,8 @@ router.post('/nodes', authMiddleware, tenantMiddleware, requireManager, async (r
     const result = await query(
       `INSERT INTO flow_nodes (
          tenant_id, node_key, name, type, message_text, ai_system_prompt, keywords, options,
-         next_node_key, keyword_match_next, keyword_nomatch_next, action_type, position, active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         next_node_key, keyword_match_next, keyword_nomatch_next, capture_field, action_type, position, active
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.tenantId,
         payload.node_key,
@@ -135,6 +140,7 @@ router.post('/nodes', authMiddleware, tenantMiddleware, requireManager, async (r
         payload.next_node_key,
         payload.keyword_match_next,
         payload.keyword_nomatch_next,
+        payload.capture_field,
         payload.action_type,
         payload.position,
         payload.active,
@@ -171,7 +177,7 @@ router.put('/nodes/:id', authMiddleware, tenantMiddleware, requireManager, async
     await query(
       `UPDATE flow_nodes
        SET name = ?, type = ?, message_text = ?, ai_system_prompt = ?, keywords = ?, options = ?,
-           next_node_key = ?, keyword_match_next = ?, keyword_nomatch_next = ?, action_type = ?,
+           next_node_key = ?, keyword_match_next = ?, keyword_nomatch_next = ?, capture_field = ?, action_type = ?,
            position = ?, active = ?
        WHERE tenant_id = ? AND id = ?`,
       [
@@ -184,6 +190,7 @@ router.put('/nodes/:id', authMiddleware, tenantMiddleware, requireManager, async
         payload.next_node_key,
         payload.keyword_match_next,
         payload.keyword_nomatch_next,
+        payload.capture_field,
         payload.action_type,
         payload.position,
         payload.active,

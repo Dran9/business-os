@@ -5,6 +5,106 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-11 — SESIÓN 27 (completada)
+
+### Resumen
+Se cerró la base operativa nueva del embudo: el motor ya no depende de `nodo_escalacion`, ahora puede reanudar conversaciones escaladas de forma real, ya soporta nodos `capture_data` para inscripción conversacional y además junta mensajes de texto por silencio antes de interpretarlos. En frontend quedó expuesto el nuevo tipo de nodo y el botón `Reanudar bot` tanto en `Conversaciones` como en la tarjeta del lead.
+
+### Lo implementado en esta sesión
+1. **Motor sin dependencia obligatoria de `nodo_escalacion`**
+   - `server/services/chatbot/flowEngine.js`
+   - fallbacks como:
+     - falta de taller activo
+     - QR faltante
+     - acción desconocida
+   - ahora escalan directo sin requerir un card técnico con nombre fijo
+
+2. **Reanudar bot de verdad**
+   - `server/routes/conversations.js`
+   - `server/services/chatbot/flowEngine.js`
+   - nuevo endpoint:
+     - `POST /api/conversations/:id/resume-bot`
+   - reactiva la sesión, resuelve el nodo de reanudación y envía de inmediato la siguiente salida al cliente
+
+3. **Nuevo tipo de nodo `capture_data`**
+   - `server/db.js`
+   - `server/routes/funnel.js`
+   - `server/services/chatbot/flowEngine.js`
+   - `client/src/pages/Funnel.jsx`
+   - `capture_data` guarda un dato por nodo
+   - se dejó listo para:
+     - `last_name`
+     - `first_name`
+     - `phone` (backend preparado, sin activación visible todavía)
+   - el flujo semilla ahora pide:
+     - `¿Que apellidas? (Solo un apellido)`
+     - `¿Qúe nombre tienes? (Solo un nombre si no es compuesto)`
+   - al completar nombre + apellido:
+     - se actualiza el nombre canónico del lead
+     - se actualiza `contacts.clean_name`
+
+4. **Placeholders generales y captura de identidad**
+   - `server/services/chatbot/flowEngine.js`
+   - además de los datos del taller, ya resuelve variables como:
+     - `[NOMBRE]`
+     - `[NOMBRES]`
+     - `[APELLIDOS]`
+     - `[NOMBRE_COMPLETO]`
+     - `[CELULAR]`
+     - `[MODALIDAD]`
+     - `[MONTO]`
+
+5. **Buffer por silencio para texto libre**
+   - `server/services/chatbot/flowEngine.js`
+   - el motor espera silencio antes de interpretar texto libre
+   - configuración actual:
+     - `4s` de silencio
+     - máximo `5` mensajes
+     - ventana máxima `12s`
+   - botones, imágenes y documentos pasan inmediato, sin esperar buffer
+
+6. **Editor del embudo actualizado**
+   - `client/src/pages/Funnel.jsx`
+   - `client/src/index.css`
+   - nuevo tipo visible `Dato`
+   - selector de `capture_field`
+   - hint de placeholders con corchetes
+   - warning amarillo ya no exige `nodo_escalacion`
+
+7. **Atajos de reanudación en UI**
+   - `client/src/pages/Conversations.jsx`
+   - `client/src/pages/Leads.jsx`
+   - en `Conversaciones`:
+     - selector de nodo opcional
+     - botón `Reanudar bot`
+   - en `Leads`:
+     - shortcut desde la tarjeta del lead
+     - elige por defecto la conversación escalada más reciente, o la activa más reciente
+
+8. **Build para despliegue**
+   - `client/dist/*`
+   - se recompiló frontend porque este proyecto despliega el `dist` ya construido
+
+### Verificación
+1. `node --check` OK en:
+   - `server/db.js`
+   - `server/routes/funnel.js`
+   - `server/routes/conversations.js`
+   - `server/services/chatbot/flowEngine.js`
+2. `cd client && npm run build`: OK
+
+### Archivos principales tocados en esta sesión
+- `server/db.js`
+- `server/routes/funnel.js`
+- `server/routes/conversations.js`
+- `server/services/chatbot/flowEngine.js`
+- `client/src/pages/Funnel.jsx`
+- `client/src/pages/Conversations.jsx`
+- `client/src/pages/Leads.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `HANDOFF.md`
+
 ## Estado actual: 2026-04-09 — SESIÓN 21 (completada)
 
 ### Resumen

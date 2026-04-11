@@ -6,6 +6,7 @@ const TelegramAdapter = require('../services/channels/telegram');
 const WhatsAppAdapter = require('../services/channels/whatsapp');
 const { broadcast } = require('../services/adminEvents');
 const { getMessageTarget } = require('../services/whatsappIdentity');
+const { resumeConversationBot } = require('../services/chatbot/flowEngine');
 
 const router = express.Router();
 const VALID_INBOX_STATES = new Set(['open', 'pending', 'resolved']);
@@ -298,6 +299,34 @@ router.post('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) 
   } catch (err) {
     console.error('[conversations send message]', err);
     res.status(500).json({ error: err.message || 'Error enviando mensaje' });
+  }
+});
+
+router.post('/:id/resume-bot', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    if (!['owner', 'admin'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'No tienes permiso para reanudar el bot' });
+    }
+
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    const result = await resumeConversationBot({
+      tenantId: req.tenantId,
+      conversationId: conversation.id,
+      nodeKey: req.body?.node_key ? String(req.body.node_key).trim() : null,
+      actor: req.user?.username || 'admin',
+    });
+
+    res.json({
+      message: 'Bot reanudado',
+      ...result,
+    });
+  } catch (err) {
+    console.error('[conversations resume-bot]', err);
+    res.status(500).json({ error: err.message || 'Error reanudando el bot' });
   }
 });
 

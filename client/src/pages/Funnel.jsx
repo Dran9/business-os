@@ -16,6 +16,7 @@ import { formatDate, timeAgo } from '../utils/dates'
 const NODE_TYPES = [
   { value: 'message',              label: 'Mensaje',   icon: 'message-circle', help: 'El bot habla y sigue solo, sin esperar respuesta.' },
   { value: 'open_question_ai',     label: 'IA',        icon: 'brain',          help: 'El bot pregunta y la IA procesa la respuesta libre.' },
+  { value: 'capture_data',         label: 'Dato',      icon: 'contact-round',  help: 'El bot pide un dato puntual, espera la respuesta y la guarda en el lead.' },
   { value: 'open_question_detect', label: 'Detección', icon: 'split',          help: 'El bot busca palabras clave y enruta según lo que detecte.' },
   { value: 'options',              label: 'Botones',   icon: 'list-todo',      help: 'El cliente elige entre botones. Máximo 3 opciones.' },
   { value: 'action',               label: 'Acción',    icon: 'zap',            help: 'El sistema hace algo automático, sin pedir input al cliente.' },
@@ -53,7 +54,22 @@ const ACTION_TYPES = [
 
 const ACTION_LABEL = Object.fromEntries(ACTION_TYPES.map((a) => [a.value, a.label]))
 
-const HARDCODED_KEYS = ['nodo_09_sin_cupos', 'nodo_10_espera_pago', 'nodo_escalacion']
+const CAPTURE_FIELDS = [
+  {
+    value: 'last_name',
+    label: 'Apellido',
+    help: 'Guarda exactamente el apellido que responde el cliente, sin intentar separarlo.',
+  },
+  {
+    value: 'first_name',
+    label: 'Nombre',
+    help: 'Guarda exactamente el nombre que responde el cliente, sin inferir apellidos.',
+  },
+]
+
+const CAPTURE_FIELD_LABEL = Object.fromEntries(CAPTURE_FIELDS.map((field) => [field.value, field.label]))
+
+const HARDCODED_KEYS = ['nodo_09_sin_cupos', 'nodo_10_espera_pago']
 
 const SESSION_STATUS_LABELS = {
   active: 'Activa',
@@ -113,6 +129,7 @@ function normalizeNode(raw) {
     next_node_key: raw.next_node_key || '',
     keyword_match_next: raw.keyword_match_next || '',
     keyword_nomatch_next: raw.keyword_nomatch_next || '',
+    capture_field: raw.capture_field || '',
     action_type: raw.action_type || '',
     position: Number(raw.position || 0),
     active: raw.active !== false,
@@ -131,12 +148,16 @@ function buildPayload(node) {
     next_node_key: null,
     keyword_match_next: null,
     keyword_nomatch_next: null,
+    capture_field: null,
     action_type: null,
     position: Number(node.position || 0),
     active: node.active !== false,
   }
   if (node.type === 'open_question_ai') {
     base.ai_system_prompt = node.ai_system_prompt || ''
+    base.next_node_key = node.next_node_key || null
+  } else if (node.type === 'capture_data') {
+    base.capture_field = node.capture_field || null
     base.next_node_key = node.next_node_key || null
   } else if (node.type === 'open_question_detect') {
     base.keywords = normalizeKeywords(node.keywords_input ?? node.keywords)
@@ -164,6 +185,7 @@ function generateNodeKey(existing) {
 const ICONS = {
   'message-circle': <><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></>,
   'brain': <><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></>,
+  'contact-round': <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M19 8v6"/><path d="M16 11h6"/></>,
   'split': <><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.17-2.83L3 3"/><path d="m21 3-7.83 7.83A4 4 0 0 0 12 13.67"/></>,
   'list-todo': <><rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></>,
   'zap': <><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></>,
@@ -428,6 +450,9 @@ export default function Funnel() {
     if (!node.name?.trim()) return `"${node.node_key}" necesita un nombre`
     if (node.type === 'open_question_ai' && !node.ai_system_prompt?.trim()) {
       return `"${node.name}" necesita una instrucción para la IA`
+    }
+    if (node.type === 'capture_data' && !node.capture_field) {
+      return `"${node.name}" necesita elegir qué dato va a guardar`
     }
     if (node.type === 'action' && !node.action_type) {
       return `"${node.name}" necesita elegir una acción`
@@ -745,6 +770,13 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
       </span>
     )
   }
+  if (node.type === 'capture_data' && node.capture_field) {
+    badges.push(
+      <span key="capture" className="fnl-badge fnl-badge-dest">
+        Guarda {CAPTURE_FIELD_LABEL[node.capture_field] || node.capture_field}
+      </span>
+    )
+  }
   if (destNode) {
     badges.push(
       <span key="dest" className="fnl-badge fnl-badge-dest">
@@ -758,6 +790,9 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
     const patch = { type: nextType }
     if (nextType === 'options' && !(node.options || []).length) {
       patch.options = [{ label: '', next_node_key: '' }]
+    }
+    if (nextType === 'capture_data' && !node.capture_field) {
+      patch.capture_field = 'last_name'
     }
     updateNode(node.id, patch)
   }
@@ -800,9 +835,10 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
 
   // Validaciones inline (visual feedback)
   const needsAiPrompt = node.type === 'open_question_ai' && !node.ai_system_prompt?.trim()
+  const needsCaptureField = node.type === 'capture_data' && !node.capture_field
   const needsActionType = node.type === 'action' && !node.action_type
   const hasHiddenConfig = (
-    needsAiPrompt || needsActionType
+    needsAiPrompt || needsCaptureField || needsActionType
     || (node.type === 'open_question_detect' && (node.keywords?.length || 0) === 0)
     || (node.type === 'options' && (node.options?.length || 0) === 0)
   )
@@ -893,7 +929,7 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
                 ref={textareaRef}
                 className="fnl-textarea fnl-wa-textarea"
                 value={node.message_text}
-                placeholder="Escribí lo que verá el cliente. Usá _[nombre]_ y otras variables del lead."
+                placeholder="Escribí lo que verá el cliente. Usá variables entre corchetes como [NOMBRE_COMPLETO], [VENUE] o [FECHA]."
                 rows={3}
                 onChange={(e) => updateNode(node.id, { message_text: e.target.value })}
               />
@@ -915,12 +951,13 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
       )}
 
       {/* ── Sección 3: PROCESAR ── */}
-      {node.type === 'open_question_ai' || node.type === 'open_question_detect' || node.type === 'action' ? (
+      {node.type === 'open_question_ai' || node.type === 'capture_data' || node.type === 'open_question_detect' || node.type === 'action' ? (
         <div className={`fnl-section ${openProcess || hasHiddenConfig ? 'open' : ''}`}>
           <button type="button" className="fnl-section-header" onClick={() => setOpenProcess((v) => !v)}>
             <div className="fnl-section-dot process" />
             <span className="fnl-section-label">
               {node.type === 'open_question_ai'     ? '3. Procesar con IA' : null}
+              {node.type === 'capture_data'         ? '3. Guardar dato capturado' : null}
               {node.type === 'open_question_detect' ? '3. Detectar palabras clave' : null}
               {node.type === 'action'                ? 'Acción automática del sistema' : null}
             </span>
@@ -961,6 +998,26 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
                   />
                   <div className="fnl-field-hint">
                     Usa comas para separar palabras o frases. No uses puntos. El sistema ignora mayúsculas y acentos automáticamente.
+                  </div>
+                </div>
+              ) : null}
+
+              {node.type === 'capture_data' ? (
+                <div className="fnl-field">
+                  <div className="fnl-field-label">Dato que se va a guardar</div>
+                  <select
+                    className={`fnl-select ${needsCaptureField ? 'warn' : ''}`}
+                    value={node.capture_field || ''}
+                    onChange={(e) => updateNode(node.id, { capture_field: e.target.value })}
+                  >
+                    <option value="">Elegir dato...</option>
+                    {CAPTURE_FIELDS.map((field) => (
+                      <option key={field.value} value={field.value}>{field.label}</option>
+                    ))}
+                  </select>
+                  <div className="fnl-field-hint">
+                    {(CAPTURE_FIELDS.find((field) => field.value === node.capture_field)?.help)
+                      || 'Este nodo espera un dato puntual y lo guarda antes de pasar al siguiente paso.'}
                   </div>
                 </div>
               ) : null}

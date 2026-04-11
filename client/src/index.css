@@ -601,6 +601,16 @@ body {
   margin-bottom: var(--space-1);
 }
 
+.bot-resume-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
 /* --- PIN INPUT --- */
 .pin-inputs {
   display: flex;
@@ -1352,7 +1362,7 @@ body {
 
 .fnl-type-selector {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-1);
   background: var(--color-surface-hover);
   margin: var(--space-3) var(--space-4);

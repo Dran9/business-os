@@ -138,7 +138,7 @@ const INITIAL_FLOW_NODES = [
     type: 'options',
     message_text: '¿Qué opción eliges?',
     options: [
-      { label: 'Participar — 150 Bs', next_node_key: 'nodo_08_qr_participante' },
+      { label: 'Participar — 150 Bs', next_node_key: 'nodo_08p_apellido' },
       { label: 'Constelar — 250 Bs', next_node_key: 'nodo_08_verificar_cupos' },
     ],
     position: 70,
@@ -148,8 +148,44 @@ const INITIAL_FLOW_NODES = [
     name: 'Verificar cupos constelar',
     type: 'action',
     action_type: 'check_workshop_capacity',
-    next_node_key: 'nodo_09_qr_constelar',
+    next_node_key: 'nodo_09c_apellido',
     position: 80,
+  },
+  {
+    node_key: 'nodo_08p_apellido',
+    name: 'Apellido participante',
+    type: 'capture_data',
+    message_text: '¿Que apellidas? (Solo un apellido)',
+    capture_field: 'last_name',
+    next_node_key: 'nodo_08p_nombre',
+    position: 82,
+  },
+  {
+    node_key: 'nodo_08p_nombre',
+    name: 'Nombre participante',
+    type: 'capture_data',
+    message_text: '¿Qúe nombre tienes? (Solo un nombre si no es compuesto)',
+    capture_field: 'first_name',
+    next_node_key: 'nodo_08_qr_participante',
+    position: 84,
+  },
+  {
+    node_key: 'nodo_09c_apellido',
+    name: 'Apellido constelar',
+    type: 'capture_data',
+    message_text: '¿Que apellidas? (Solo un apellido)',
+    capture_field: 'last_name',
+    next_node_key: 'nodo_09c_nombre',
+    position: 86,
+  },
+  {
+    node_key: 'nodo_09c_nombre',
+    name: 'Nombre constelar',
+    type: 'capture_data',
+    message_text: '¿Qúe nombre tienes? (Solo un nombre si no es compuesto)',
+    capture_field: 'first_name',
+    next_node_key: 'nodo_09_qr_constelar',
+    position: 88,
   },
   {
     node_key: 'nodo_09_sin_cupos',
@@ -229,9 +265,9 @@ async function seedInitialFlowNodes(conn, tenantId) {
     await conn.execute(
       `INSERT INTO flow_nodes (
          tenant_id, node_key, name, type, message_text, ai_system_prompt, keywords,
-         options, next_node_key, keyword_match_next, keyword_nomatch_next,
+         options, next_node_key, keyword_match_next, keyword_nomatch_next, capture_field,
          action_type, position, active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
       [
         tenantId,
         node.node_key,
@@ -244,6 +280,7 @@ async function seedInitialFlowNodes(conn, tenantId) {
         node.next_node_key || null,
         node.keyword_match_next || null,
         node.keyword_nomatch_next || null,
+        node.capture_field || null,
         node.action_type || null,
         node.position || 0,
       ]
@@ -251,6 +288,126 @@ async function seedInitialFlowNodes(conn, tenantId) {
   }
 
   console.log(`[DB] Flow inicial sembrado para tenant ${tenantId}`);
+}
+
+async function upgradeDefaultEnrollmentCaptureNodes(conn, tenantId) {
+  const [existingCapture] = await conn.execute(
+    `SELECT id
+     FROM flow_nodes
+     WHERE tenant_id = ? AND type = 'capture_data'
+     LIMIT 1`,
+    [tenantId]
+  ).catch(() => [[]]);
+
+  if (existingCapture.length > 0) {
+    return;
+  }
+
+  const keys = [
+    'nodo_07_eleccion',
+    'nodo_08_verificar_cupos',
+    'nodo_08_qr_participante',
+    'nodo_09_qr_constelar',
+  ];
+
+  const [rows] = await conn.execute(
+    `SELECT id, node_key, type, options, next_node_key
+     FROM flow_nodes
+     WHERE tenant_id = ? AND node_key IN (${keys.map(() => '?').join(', ')})`,
+    [tenantId, ...keys]
+  );
+
+  const byKey = Object.fromEntries(rows.map((row) => [row.node_key, row]));
+  if (
+    !byKey.nodo_07_eleccion
+    || !byKey.nodo_08_verificar_cupos
+    || !byKey.nodo_08_qr_participante
+    || !byKey.nodo_09_qr_constelar
+  ) {
+    return;
+  }
+
+  const options = JSON.parse(byKey.nodo_07_eleccion.options || '[]');
+  const participantOption = options.find((option) => option?.next_node_key === 'nodo_08_qr_participante');
+  const constellationOption = options.find((option) => option?.next_node_key === 'nodo_08_verificar_cupos');
+  if (!participantOption || !constellationOption || byKey.nodo_08_verificar_cupos.next_node_key !== 'nodo_09_qr_constelar') {
+    return;
+  }
+
+  const captureNodes = [
+    {
+      node_key: 'nodo_08p_apellido',
+      name: 'Apellido participante',
+      type: 'capture_data',
+      message_text: '¿Que apellidas? (Solo un apellido)',
+      capture_field: 'last_name',
+      next_node_key: 'nodo_08p_nombre',
+      position: 82,
+    },
+    {
+      node_key: 'nodo_08p_nombre',
+      name: 'Nombre participante',
+      type: 'capture_data',
+      message_text: '¿Qúe nombre tienes? (Solo un nombre si no es compuesto)',
+      capture_field: 'first_name',
+      next_node_key: 'nodo_08_qr_participante',
+      position: 84,
+    },
+    {
+      node_key: 'nodo_09c_apellido',
+      name: 'Apellido constelar',
+      type: 'capture_data',
+      message_text: '¿Que apellidas? (Solo un apellido)',
+      capture_field: 'last_name',
+      next_node_key: 'nodo_09c_nombre',
+      position: 86,
+    },
+    {
+      node_key: 'nodo_09c_nombre',
+      name: 'Nombre constelar',
+      type: 'capture_data',
+      message_text: '¿Qúe nombre tienes? (Solo un nombre si no es compuesto)',
+      capture_field: 'first_name',
+      next_node_key: 'nodo_09_qr_constelar',
+      position: 88,
+    },
+  ];
+
+  for (const node of captureNodes) {
+    await conn.execute(
+      `INSERT INTO flow_nodes (
+         tenant_id, node_key, name, type, message_text, capture_field,
+         next_node_key, position, active
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+      [
+        tenantId,
+        node.node_key,
+        node.name,
+        node.type,
+        node.message_text,
+        node.capture_field,
+        node.next_node_key,
+        node.position,
+      ]
+    ).catch(() => {});
+  }
+
+  const nextOptions = options.map((option) => (
+    option?.next_node_key === 'nodo_08_qr_participante'
+      ? { ...option, next_node_key: 'nodo_08p_apellido' }
+      : option
+  ));
+
+  await conn.execute(
+    'UPDATE flow_nodes SET options = ? WHERE tenant_id = ? AND id = ?',
+    [stringifyJsonField(nextOptions), tenantId, byKey.nodo_07_eleccion.id]
+  );
+  await conn.execute(
+    'UPDATE flow_nodes SET next_node_key = ? WHERE tenant_id = ? AND id = ?',
+    ['nodo_09c_apellido', tenantId, byKey.nodo_08_verificar_cupos.id]
+  );
+
+  console.log(`[DB] Flow default actualizado con captura de identidad para tenant ${tenantId}`);
 }
 
 // ============================================
@@ -476,7 +633,7 @@ async function initializeDatabase() {
         tenant_id INT NOT NULL,
         node_key VARCHAR(50) NOT NULL,
         name VARCHAR(100) NOT NULL,
-        type ENUM('message', 'open_question_ai', 'open_question_detect', 'options', 'action') NOT NULL,
+        type ENUM('message', 'open_question_ai', 'open_question_detect', 'options', 'action', 'capture_data') NOT NULL,
         message_text TEXT,
         ai_system_prompt TEXT,
         keywords JSON,
@@ -484,6 +641,7 @@ async function initializeDatabase() {
         next_node_key VARCHAR(50),
         keyword_match_next VARCHAR(50),
         keyword_nomatch_next VARCHAR(50),
+        capture_field VARCHAR(50),
         action_type VARCHAR(50),
         position INT DEFAULT 0,
         active BOOLEAN DEFAULT TRUE,
@@ -806,8 +964,10 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof MEDIUMBLOB').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof_type VARCHAR(100)').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS ocr_data JSON').catch(() => {});
+    await conn.execute('ALTER TABLE flow_nodes MODIFY COLUMN type ENUM("message", "open_question_ai", "open_question_detect", "options", "action", "capture_data") NOT NULL').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS position INT DEFAULT 0').catch(() => {});
+    await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS capture_field VARCHAR(50)').catch(() => {});
     await conn.execute('ALTER TABLE flow_sessions ADD COLUMN IF NOT EXISTS status ENUM("active", "completed", "escalated", "abandoned") DEFAULT "active"').catch(() => {});
     await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_id INT DEFAULT NULL').catch(() => {});
     await conn.execute('ALTER TABLE leads ADD INDEX IF NOT EXISTS idx_contact_id (contact_id)').catch(() => {});
@@ -828,6 +988,7 @@ async function initializeDatabase() {
     ).catch(() => {});
 
     await seedInitialFlowNodes(conn, 1);
+    await upgradeDefaultEnrollmentCaptureNodes(conn, 1);
 
     console.log('[DB] Schema inicializado correctamente');
   } finally {

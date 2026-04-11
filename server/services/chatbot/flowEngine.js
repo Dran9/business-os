@@ -9,11 +9,24 @@ const { getActivePaymentOptions } = require('../paymentOptions');
 const { sendPushinatorNotification } = require('../pushinator');
 const { classifyName } = require('../nameClassifier');
 const { findByPhone } = require('../agendaBridge');
-const { resolveIdentity } = require('../whatsappIdentity');
+const { resolveIdentity, getMessageTarget } = require('../whatsappIdentity');
+const TelegramAdapter = require('../channels/telegram');
+const WhatsAppAdapter = require('../channels/whatsapp');
 
-const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options']);
+const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options', 'capture_data']);
 const TELEGRAM_BUTTON_PREFIX = 'option:';
 const CONSTELLATION_DEFAULT_LIMIT = 7;
+const TEXT_BUFFER_IDLE_MS = 4000;
+const TEXT_BUFFER_MAX_MESSAGES = 5;
+const TEXT_BUFFER_MAX_WINDOW_MS = 12000;
+const TEXT_BUFFER_SEPARATOR = '\n';
+const TEXT_BUFFER_BY_CONVERSATION = new Map();
+
+const CAPTURE_FIELD_LABELS = {
+  first_name: 'nombre',
+  last_name: 'apellido',
+  phone: 'celular',
+};
 
 function parseJson(value, fallback = {}) {
   if (!value) return fallback;
@@ -31,6 +44,10 @@ function toJson(value) {
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function normalizeInternalWhitespace(value) {
+  return normalizeText(value).replace(/\s+/g, ' ');
 }
 
 function normalizeComparableText(value) {
@@ -77,6 +94,22 @@ function formatBoliviaDate(dateValue) {
 function formatBoliviaTime(timeValue) {
   if (!timeValue) return 'Hora por confirmar';
   return String(timeValue).slice(0, 5);
+}
+
+function formatMoneyBs(amount) {
+  const numeric = Number(amount || 0);
+  if (!numeric) return '';
+  return `${Number.isInteger(numeric) ? numeric : numeric.toFixed(2)} Bs`;
+}
+
+function formatSelectedModality(value) {
+  if (value === 'constelar') return 'Constelar';
+  if (value === 'participar') return 'Participar';
+  return normalizeText(value);
+}
+
+function buildFullName(firstName, lastName) {
+  return normalizeInternalWhitespace([firstName, lastName].filter(Boolean).join(' '));
 }
 
 function buildHistoryEntry(node) {
@@ -170,6 +203,18 @@ async function getActiveFlowSession(tenantId, conversationId) {
   return rows[0] || null;
 }
 
+async function getLatestFlowSession(tenantId, conversationId) {
+  const rows = await query(
+    `SELECT *
+     FROM flow_sessions
+     WHERE tenant_id = ? AND conversation_id = ?
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`,
+    [tenantId, conversationId]
+  );
+  return rows[0] || null;
+}
+
 async function createFlowSession({ tenantId, conversationId, leadId, startNode, context = {} }) {
   const nextContext = {
     ...context,
@@ -211,6 +256,24 @@ async function updateFlowSession(sessionId, patch) {
 
 async function emitSessionUpdate(tenantId, sessionId) {
   broadcast('funnel_session_update', { id: sessionId }, tenantId);
+}
+
+async function setConversationBotActive(tenantId, conversationId, nodeKey = null) {
+  const params = [tenantId, conversationId];
+  let sql = `UPDATE conversations
+             SET status = 'active',
+                 assigned_to = 'bot',
+                 inbox_state = 'open',
+                 escalation_reason = NULL`;
+
+  if (nodeKey) {
+    sql += ', current_phase = ?';
+    params.unshift(nodeKey);
+  }
+
+  sql += ' WHERE tenant_id = ? AND id = ?';
+  await query(sql, params);
+  broadcast('conversation:change', { id: conversationId, reason: 'flow-resumed' }, tenantId);
 }
 
 async function setConversationHumanAttention(tenantId, conversationId, reason) {
@@ -296,12 +359,22 @@ async function transitionSessionToNode({ tenantId, session, nextNodeKey, context
   return nextNode;
 }
 
-async function handleMissingNode({ tenantId, session, conversationId, lead, lastMessageText, reason }) {
-  console.error(`[FlowEngine] ${reason} tenant=${tenantId} conversation=${conversationId}`);
+async function escalateConversationFlow({
+  tenantId,
+  session,
+  conversationId,
+  lead,
+  context,
+  lastMessageText,
+  reason,
+  customerMessage,
+}) {
+  const nextContext = {
+    ...(context || parseJson(session.context, {})),
+    last_error: reason || null,
+  };
 
-  const context = parseJson(session.context, {});
-  context.last_error = reason;
-  await markSessionEscalated(tenantId, session, context);
+  await markSessionEscalated(tenantId, session, nextContext);
   await setConversationHumanAttention(tenantId, conversationId, reason);
 
   const tenant = await getTenantById(tenantId);
@@ -316,8 +389,22 @@ async function handleMissingNode({ tenantId, session, conversationId, lead, last
 
   return {
     type: 'text',
-    text: 'Gracias. Daniel revisará tu caso personalmente y te escribirá pronto.',
+    text: customerMessage || 'Gracias. Daniel revisará tu caso personalmente y te escribirá pronto.',
   };
+}
+
+async function handleMissingNode({ tenantId, session, conversationId, lead, lastMessageText, reason }) {
+  console.error(`[FlowEngine] ${reason} tenant=${tenantId} conversation=${conversationId}`);
+  return escalateConversationFlow({
+    tenantId,
+    session,
+    conversationId,
+    lead,
+    context: parseJson(session.context, {}),
+    lastMessageText,
+    reason,
+    customerMessage: 'Gracias. Daniel revisará tu caso personalmente y te escribirá pronto.',
+  });
 }
 
 function buildOptionButtonId(nodeKey, index) {
@@ -352,6 +439,117 @@ function detectKeywords(node, messageText) {
   const keywords = parseNodeKeywords(node.keywords);
   const matched = keywords.filter((keyword) => normalized.includes(normalizeComparableText(keyword)));
   return matched;
+}
+
+function getCapturedIdentity(context = {}, lead = null) {
+  const metadata = parseJson(lead?.metadata, {});
+  const captured = parseJson(metadata.identity_capture, {});
+  const firstName = normalizeInternalWhitespace(context.captured_first_name || captured.first_name || '');
+  const lastName = normalizeInternalWhitespace(context.captured_last_name || captured.last_name || '');
+  const fullName = normalizeInternalWhitespace(
+    context.captured_full_name
+    || captured.full_name
+    || buildFullName(firstName, lastName)
+    || lead?.name
+    || ''
+  );
+  const phone = normalizeInternalWhitespace(context.captured_phone || captured.phone || lead?.phone || '');
+
+  return {
+    first_name: firstName,
+    last_name: lastName,
+    full_name: fullName,
+    phone,
+  };
+}
+
+function validateCaptureInput(field, rawValue) {
+  const value = normalizeInternalWhitespace(rawValue);
+  const label = CAPTURE_FIELD_LABELS[field] || 'dato';
+
+  if (!value) {
+    return { error: `Necesito tu ${label} para continuar.` };
+  }
+
+  if (field === 'phone') {
+    const digits = value.replace(/\D+/g, '');
+    if (digits.length < 7) {
+      return { error: 'Necesito un celular válido para continuar.' };
+    }
+    return { value: digits };
+  }
+
+  if (!/[A-Za-zÀ-ÖØ-öø-ÿ]/.test(value)) {
+    return { error: `Necesito un ${label} válido para continuar.` };
+  }
+
+  return { value };
+}
+
+async function persistCapturedIdentity({ tenantId, lead, contact, field, value }) {
+  if (!lead?.id || !field || !value) return null;
+
+  const metadata = parseJson(lead.metadata, {});
+  const identityCapture = parseJson(metadata.identity_capture, {});
+
+  if (field === 'first_name') identityCapture.first_name = value;
+  if (field === 'last_name') identityCapture.last_name = value;
+  if (field === 'phone') identityCapture.phone = value;
+
+  const fullName = buildFullName(identityCapture.first_name, identityCapture.last_name);
+  if (fullName) {
+    identityCapture.full_name = fullName;
+  }
+
+  metadata.identity_capture = identityCapture;
+  metadata.first_name = identityCapture.first_name || null;
+  metadata.last_name = identityCapture.last_name || null;
+  metadata.full_name = identityCapture.full_name || null;
+  if (identityCapture.phone) {
+    metadata.phone = identityCapture.phone;
+  }
+
+  const leadUpdates = [];
+  const leadParams = [];
+
+  leadUpdates.push('metadata = ?');
+  leadParams.push(toJson(metadata));
+
+  if (fullName) {
+    leadUpdates.push('name = ?');
+    leadParams.push(fullName);
+  }
+
+  if (field === 'phone') {
+    leadUpdates.push('phone = COALESCE(phone, ?)');
+    leadParams.push(value);
+  }
+
+  leadParams.push(tenantId, lead.id);
+  await query(
+    `UPDATE leads
+     SET ${leadUpdates.join(', ')},
+         last_contact_at = NOW()
+     WHERE tenant_id = ? AND id = ?`,
+    leadParams
+  );
+
+  if (contact?.id && fullName) {
+    await query(
+      `UPDATE contacts
+       SET clean_name = ?,
+           name_quality = 'nombre_completo',
+           updated_at = NOW()
+       WHERE tenant_id = ? AND id = ?`,
+      [fullName, tenantId, contact.id]
+    ).catch(() => {});
+  }
+
+  broadcast('lead:change', { id: lead.id, reason: 'identity-captured' }, tenantId);
+  return {
+    ...identityCapture,
+    full_name: fullName || identityCapture.full_name || null,
+  };
 }
 
 function inferModalityFromNode(nodeKey) {
@@ -728,12 +926,19 @@ async function executeActionNode({
   switch (node.action_type) {
     case 'check_workshop_capacity': {
       if (!workshop) {
+        const escalationResponse = await escalateConversationFlow({
+          tenantId,
+          session,
+          conversationId: conversation.id,
+          lead,
+          context,
+          lastMessageText: incoming?.message_text || context.last_inbound_message || '',
+          reason: 'No hay taller activo configurado para continuar el embudo',
+          customerMessage: 'Ahora mismo no tengo un taller activo para ofrecerte. Daniel te escribirá personalmente.',
+        });
         return {
-          responses: [{
-            type: 'text',
-            text: 'Ahora mismo no tengo un taller activo para ofrecerte. Daniel te escribirá personalmente.',
-          }],
-          nextNodeKey: 'nodo_escalacion',
+          responses: [escalationResponse],
+          nextNodeKey: null,
           actionTaken: 'check_workshop_capacity:no-workshop',
         };
       }
@@ -760,12 +965,19 @@ async function executeActionNode({
       });
 
       if (!slot) {
+        const escalationResponse = await escalateConversationFlow({
+          tenantId,
+          session,
+          conversationId: conversation.id,
+          lead,
+          context,
+          lastMessageText: incoming?.message_text || context.last_inbound_message || '',
+          reason: 'Falta un QR configurado para la inscripción del embudo',
+          customerMessage: 'Registré tu interés, pero no hay un QR configurado para esta opción. Daniel te escribirá personalmente para cerrar la reserva.',
+        });
         return {
-          responses: [{
-            type: 'text',
-            text: 'Registré tu interés, pero no hay un QR configurado para esta opción. Daniel te escribirá personalmente para cerrar la reserva.',
-          }],
-          nextNodeKey: 'nodo_escalacion',
+          responses: [escalationResponse],
+          nextNodeKey: null,
           actionTaken: 'send_qr:missing-slot',
         };
       }
@@ -814,38 +1026,38 @@ async function executeActionNode({
     }
 
     case 'escalate': {
-      const tenant = await getTenantById(tenantId);
-      const leadLabel = lead?.name || lead?.phone || 'Lead sin identificar';
-      const latestMessage = normalizeText(incoming?.message_text || context.last_inbound_message || '');
-
-      await setConversationHumanAttention(tenantId, conversation.id, 'Escalación clínica o manual desde embudo');
-      await markSessionEscalated(tenantId, session, context);
-
-      await sendPushinatorNotification(
-        tenant?.push_config,
-        `Embudo escalado: ${leadLabel}\n${latestMessage || 'Sin mensaje reciente'}`,
-        { acknowledgment_required: false }
-      ).catch((err) => {
-        console.error('[FlowEngine] Pushinator skipped:', err.message);
+      const escalationResponse = await escalateConversationFlow({
+        tenantId,
+        session,
+        conversationId: conversation.id,
+        lead,
+        context,
+        lastMessageText: incoming?.message_text || context.last_inbound_message || '',
+        reason: 'Escalación clínica o manual desde embudo',
+        customerMessage: 'Perfecto. Daniel revisará tu caso personalmente y te contactará lo antes posible.',
       });
 
       return {
-        responses: [{
-          type: 'text',
-          text: 'Perfecto. Daniel revisará tu caso personalmente y te contactará lo antes posible.',
-        }],
+        responses: [escalationResponse],
         nextNodeKey: null,
         actionTaken: 'escalate',
       };
     }
 
     default:
+      const escalationResponse = await escalateConversationFlow({
+        tenantId,
+        session,
+        conversationId: conversation.id,
+        lead,
+        context,
+        lastMessageText: incoming?.message_text || context.last_inbound_message || '',
+        reason: `Acción de embudo desconocida: ${node.action_type || 'none'}`,
+        customerMessage: 'Hubo un paso interno que no pude completar. Daniel continuará la conversación personalmente.',
+      });
       return {
-        responses: [{
-          type: 'text',
-          text: 'Hubo un paso interno que no pude completar. Daniel continuará la conversación personalmente.',
-        }],
-        nextNodeKey: 'nodo_escalacion',
+        responses: [escalationResponse],
+        nextNodeKey: null,
         actionTaken: `unknown_action:${node.action_type || 'none'}`,
       };
   }
@@ -865,7 +1077,7 @@ async function runFlowEngine({
     throw new Error('Conversación no encontrada para flowEngine');
   }
 
-  const lead = await getLeadById(tenant_id, lead_id || conversation.lead_id);
+  let lead = await getLeadById(tenant_id, lead_id || conversation.lead_id);
   let session = await getActiveFlowSession(tenant_id, conversation_id);
 
   const phone = lead?.phone || incoming?.from || incoming?.senderId || null;
@@ -943,12 +1155,17 @@ async function runFlowEngine({
 
   const responses = [];
   const rawContext = parseJson(session.context, {});
+  const capturedIdentity = getCapturedIdentity(rawContext, lead);
   let context = {
     ...rawContext,
     history: Array.isArray(rawContext.history) ? rawContext.history : [],
     pending_input_for: rawContext.pending_input_for || null,
     last_inbound_message: normalizeText(message_text),
     channel,
+    captured_first_name: rawContext.captured_first_name || capturedIdentity.first_name || null,
+    captured_last_name: rawContext.captured_last_name || capturedIdentity.last_name || null,
+    captured_full_name: rawContext.captured_full_name || capturedIdentity.full_name || null,
+    captured_phone: rawContext.captured_phone || capturedIdentity.phone || null,
   };
 
   let currentNode = await getFlowNodeByKey(tenant_id, session.current_node_key);
@@ -980,7 +1197,7 @@ async function runFlowEngine({
 
     if (currentNode.type === 'message') {
       const workshop = await getLatestWorkshop(tenant_id);
-      let renderedText = resolveMessageText(currentNode.message_text, context, workshop);
+      let renderedText = resolveMessageText(currentNode.message_text, context, workshop, lead, conversation);
       if (context.greeting_override && safetyCounter === 1) {
         renderedText = `${context.greeting_override}\n\n${renderedText}`;
         delete context.greeting_override;
@@ -1090,7 +1307,7 @@ async function runFlowEngine({
 
     if (expectsInput && !isAwaitingInput) {
       const workshop = await getLatestWorkshop(tenant_id);
-      const promptText = formatMessageWithWorkshop(currentNode.message_text, workshop);
+      const promptText = resolveMessageText(currentNode.message_text, context, workshop, lead, conversation);
       if (currentNode.type === 'options') {
         const options = parseNodeOptions(currentNode.options);
         responses.push({
@@ -1217,6 +1434,96 @@ async function runFlowEngine({
       continue;
     }
 
+    if (currentNode.type === 'capture_data') {
+      const validation = validateCaptureInput(currentNode.capture_field, message_text);
+      if (validation.error) {
+        const workshop = await getLatestWorkshop(tenant_id);
+        responses.push({
+          type: 'text',
+          text: validation.error,
+          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+        });
+        responses.push({
+          type: 'text',
+          text: resolveMessageText(currentNode.message_text, context, workshop, lead, conversation),
+          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+        });
+        context.pending_input_for = currentNode.node_key;
+        await updateFlowSession(session.id, { context });
+        await emitSessionUpdate(tenant_id, session.id);
+        break;
+      }
+
+      context.pending_input_for = null;
+      if (currentNode.capture_field === 'first_name') {
+        context.captured_first_name = validation.value;
+      }
+      if (currentNode.capture_field === 'last_name') {
+        context.captured_last_name = validation.value;
+      }
+      if (currentNode.capture_field === 'phone') {
+        context.captured_phone = validation.value;
+      }
+
+      const persistedIdentity = await persistCapturedIdentity({
+        tenantId: tenant_id,
+        lead,
+        contact,
+        field: currentNode.capture_field,
+        value: validation.value,
+      });
+
+      if (persistedIdentity?.first_name) context.captured_first_name = persistedIdentity.first_name;
+      if (persistedIdentity?.last_name) context.captured_last_name = persistedIdentity.last_name;
+      if (persistedIdentity?.phone) context.captured_phone = persistedIdentity.phone;
+
+      context.captured_full_name = buildFullName(context.captured_first_name, context.captured_last_name) || null;
+      if (context.captured_full_name && lead) {
+        lead = {
+          ...lead,
+          name: context.captured_full_name,
+          metadata: toJson({
+            ...parseJson(lead.metadata, {}),
+            identity_capture: {
+              first_name: context.captured_first_name,
+              last_name: context.captured_last_name,
+              full_name: context.captured_full_name,
+              phone: context.captured_phone || null,
+            },
+          }),
+        };
+      }
+
+      const nextNode = await transitionSessionToNode({
+        tenantId: tenant_id,
+        session,
+        nextNodeKey: currentNode.next_node_key,
+        context,
+      });
+
+      if (!currentNode.next_node_key || session.status === 'completed') {
+        break;
+      }
+
+      if (!nextNode) {
+        const fallback = await handleMissingNode({
+          tenantId: tenant_id,
+          session,
+          conversationId: conversation_id,
+          lead,
+          lastMessageText: message_text,
+          reason: `Nodo siguiente inexistente desde captura ${currentNode.node_key}: ${currentNode.next_node_key}`,
+        });
+        responses.push(fallback);
+        actionTaken = 'missing_capture_node';
+        break;
+      }
+
+      context = parseJson(session.context, context);
+      currentNode = nextNode;
+      continue;
+    }
+
     if (currentNode.type === 'options') {
       const selectedOption = parseSelectedOption(currentNode, message_text);
       if (!selectedOption) {
@@ -1306,17 +1613,44 @@ async function runFlowEngine({
   };
 }
 
-function formatMessageWithWorkshop(messageText, workshop) {
-  if (!messageText) return '';
-  return String(messageText)
-    .replaceAll('[FECHA]', workshop ? formatBoliviaDate(workshop.date) : 'fecha por confirmar')
-    .replaceAll('[VENUE]', workshop?.venue_name || 'venue por confirmar')
-    .replaceAll('[HORA_INICIO]', workshop ? formatBoliviaTime(workshop.time_start) : 'hora por confirmar')
-    .replaceAll('[HORA_FIN]', workshop ? formatBoliviaTime(workshop.time_end) : 'hora por confirmar');
+function buildPlaceholderMap(context = {}, workshop = null, lead = null, conversation = null) {
+  const identity = getCapturedIdentity(context, lead);
+  const amount = inferAmountFromContext(context) || workshop?.price || null;
+  const canonicalFirstName = identity.first_name
+    || normalizeInternalWhitespace((identity.full_name || '').split(' ')[0] || '')
+    || 'amigo/a';
+
+  return {
+    FECHA: workshop ? formatBoliviaDate(workshop.date) : 'fecha por confirmar',
+    VENUE: workshop?.venue_name || 'venue por confirmar',
+    VENUE_DIRECCION: workshop?.venue_address || '',
+    HORA_INICIO: workshop ? formatBoliviaTime(workshop.time_start) : 'hora por confirmar',
+    HORA_FIN: workshop ? formatBoliviaTime(workshop.time_end) : 'hora por confirmar',
+    TALLER: workshop?.name || '',
+    NOMBRE: canonicalFirstName,
+    NOMBRES: identity.first_name || '',
+    APELLIDOS: identity.last_name || '',
+    NOMBRE_COMPLETO: identity.full_name || lead?.name || '',
+    CELULAR: identity.phone || '',
+    TELEFONO: identity.phone || '',
+    MODALIDAD: formatSelectedModality(context.selected_modality || inferModalityFromNode(conversation?.current_phase || '')),
+    MONTO: formatMoneyBs(amount),
+  };
 }
 
-function resolveMessageText(messageText, context, workshop) {
-  return formatMessageWithWorkshop(messageText, workshop, context);
+function formatMessageWithWorkshop(messageText, workshop, context = {}, lead = null, conversation = null) {
+  if (!messageText) return '';
+  const placeholders = buildPlaceholderMap(context, workshop, lead, conversation);
+  return String(messageText).replace(/\[([A-Z0-9_]+)\]/g, (match, key) => {
+    if (!Object.prototype.hasOwnProperty.call(placeholders, key)) {
+      return match;
+    }
+    return placeholders[key] ?? '';
+  });
+}
+
+function resolveMessageText(messageText, context, workshop, lead = null, conversation = null) {
+  return formatMessageWithWorkshop(messageText, workshop, context, lead, conversation);
 }
 
 function buildAiSystemPrompt(node, context) {
@@ -1325,6 +1659,429 @@ function buildAiSystemPrompt(node, context) {
     systemPrompt += `\n\nContexto adicional sobre este contacto: ${context.groq_context}`;
   }
   return systemPrompt;
+}
+
+function shouldBufferIncomingText(incoming) {
+  return incoming?.contentType === 'text' && Boolean(normalizeText(incoming.text));
+}
+
+function getTextBufferKey(tenantId, conversationId) {
+  return `${tenantId}:${conversationId}`;
+}
+
+function clearBufferedText(key) {
+  const existing = TEXT_BUFFER_BY_CONVERSATION.get(key);
+  if (!existing) return;
+  if (existing.timer) clearTimeout(existing.timer);
+  TEXT_BUFFER_BY_CONVERSATION.delete(key);
+}
+
+function scheduleBufferedTextFlush(key) {
+  const existing = TEXT_BUFFER_BY_CONVERSATION.get(key);
+  if (!existing) return;
+  if (existing.timer) clearTimeout(existing.timer);
+  existing.timer = setTimeout(() => {
+    flushBufferedText(key).catch((err) => {
+      console.error('[FlowEngine] Text buffer flush failed:', err.stack || err.message || err);
+    });
+  }, TEXT_BUFFER_IDLE_MS);
+  existing.timer.unref?.();
+}
+
+async function processFlowAfterInboundPersist({
+  tenantId,
+  lead,
+  conversation,
+  incoming,
+  channelAdapter,
+  inboundMessageId,
+  messageTextOverride = null,
+}) {
+  const effectiveText = messageTextOverride == null ? incoming.text : messageTextOverride;
+
+  if (['image', 'document'].includes(incoming.contentType)) {
+    const paymentSettings = await getPaymentSettings(tenantId).catch(() => null);
+    if (paymentSettings?.payment_proof_debug_mode) {
+      const diagnosticResponse = await runPaymentProofDiagnostic({
+        tenantId,
+        conversation,
+        incoming: { ...incoming, channel: channelAdapter },
+      }).catch((err) => {
+        console.error('[FlowEngine] Payment proof diagnostic failed:', err.message);
+        return {
+          type: 'text',
+          text: `Modo prueba de comprobantes: ocurrió un error interno.\n${err.message}`,
+        };
+      });
+
+      if (diagnosticResponse) {
+        await sendResponses(
+          channelAdapter,
+          incoming.replyTarget || incoming.senderId,
+          conversation.id,
+          tenantId,
+          [diagnosticResponse]
+        );
+        return {
+          lead,
+          conversation,
+          response_text: diagnosticResponse.text || '',
+          buttons: [],
+          action_taken: 'payment_proof_debug',
+          session_id: null,
+          session_context: null,
+          tag_analysis_pending: false,
+          responses: [diagnosticResponse],
+        };
+      }
+    }
+  }
+
+  const result = await runFlowEngine({
+    tenant_id: tenantId,
+    conversation_id: conversation.id,
+    lead_id: lead.id,
+    message_text: effectiveText,
+    channel: incoming.channel || channelAdapter.channelName,
+    content_type: incoming.contentType,
+    incoming: { ...incoming, text: effectiveText, channel: channelAdapter },
+  });
+
+  if (result.tag_analysis_pending && result.session_id && inboundMessageId) {
+    const latestConversation = await getConversationById(tenantId, conversation.id);
+    const latestLead = await getLeadById(tenantId, lead.id);
+    const workshop = latestConversation?.workshop_id
+      ? await getLatestWorkshop(tenantId)
+      : null;
+
+    await analyzeAndTagInboundMessage({
+      tenantId,
+      lead: latestLead || lead,
+      conversation: latestConversation || conversation,
+      workshop,
+      messageId: inboundMessageId,
+      messageText: effectiveText,
+    }).catch((err) => {
+      console.error('[FlowEngine] Tagging skipped:', err.message);
+    });
+
+    const nextContext = {
+      ...(result.session_context || {}),
+    };
+    delete nextContext.tag_on_next;
+    await updateFlowSession(result.session_id, { context: nextContext });
+  }
+
+  await recalculateLeadScore({
+    tenantId,
+    leadId: lead.id,
+  }).catch((err) => {
+    console.error('[FlowEngine] Scoring skipped:', err.message);
+  });
+
+  if (Array.isArray(result.responses) && result.responses.length > 0) {
+    await sendResponses(
+      channelAdapter,
+      incoming.replyTarget || incoming.senderId,
+      conversation.id,
+      tenantId,
+      result.responses
+    );
+  }
+
+  return {
+    lead,
+    conversation,
+    ...result,
+  };
+}
+
+async function flushBufferedText(key, { force = false } = {}) {
+  const entry = TEXT_BUFFER_BY_CONVERSATION.get(key);
+  if (!entry) return null;
+
+  const now = Date.now();
+  const idleMs = now - entry.lastAt;
+  const ageMs = now - entry.firstAt;
+  const reachedLimit = entry.messages.length >= TEXT_BUFFER_MAX_MESSAGES || ageMs >= TEXT_BUFFER_MAX_WINDOW_MS;
+
+  if (!force && !reachedLimit && idleMs < TEXT_BUFFER_IDLE_MS) {
+    scheduleBufferedTextFlush(key);
+    return null;
+  }
+
+  clearBufferedText(key);
+  const aggregatedText = entry.messages
+    .map((item) => normalizeText(item))
+    .filter(Boolean)
+    .join(TEXT_BUFFER_SEPARATOR);
+
+  if (!aggregatedText) {
+    return {
+      lead: entry.lead,
+      conversation: entry.conversation,
+      response_text: '',
+      buttons: [],
+      action_taken: 'text_buffer_empty',
+      responses: [],
+    };
+  }
+
+  return processFlowAfterInboundPersist({
+    tenantId: entry.tenantId,
+    lead: entry.lead,
+    conversation: entry.conversation,
+    incoming: {
+      ...entry.incoming,
+      text: aggregatedText,
+      contentType: 'text',
+    },
+    channelAdapter: entry.channelAdapter,
+    inboundMessageId: entry.lastInboundMessageId,
+    messageTextOverride: aggregatedText,
+  });
+}
+
+async function bufferIncomingText({
+  tenantId,
+  lead,
+  conversation,
+  incoming,
+  channelAdapter,
+  inboundMessageId,
+}) {
+  const key = getTextBufferKey(tenantId, conversation.id);
+  const now = Date.now();
+  const text = normalizeText(incoming.text);
+  const existing = TEXT_BUFFER_BY_CONVERSATION.get(key);
+
+  if (existing) {
+    existing.messages.push(text);
+    existing.lastAt = now;
+    existing.channelAdapter = channelAdapter;
+    existing.incoming = {
+      ...existing.incoming,
+      ...incoming,
+      text,
+    };
+    existing.lastInboundMessageId = inboundMessageId;
+    existing.lead = lead;
+    existing.conversation = conversation;
+  } else {
+    TEXT_BUFFER_BY_CONVERSATION.set(key, {
+      tenantId,
+      lead,
+      conversation,
+      incoming: {
+        ...incoming,
+        text,
+      },
+      channelAdapter,
+      messages: [text],
+      firstAt: now,
+      lastAt: now,
+      lastInboundMessageId: inboundMessageId,
+      timer: null,
+    });
+  }
+
+  const entry = TEXT_BUFFER_BY_CONVERSATION.get(key);
+  const reachedLimit = entry.messages.length >= TEXT_BUFFER_MAX_MESSAGES || now - entry.firstAt >= TEXT_BUFFER_MAX_WINDOW_MS;
+  if (reachedLimit) {
+    return flushBufferedText(key, { force: true });
+  }
+
+  scheduleBufferedTextFlush(key);
+  return {
+    lead,
+    conversation,
+    response_text: '',
+    buttons: [],
+    action_taken: 'text_buffer_waiting',
+    session_id: null,
+    session_context: null,
+    tag_analysis_pending: false,
+    responses: [],
+  };
+}
+
+function getTelegramAdapterForFlow() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    throw new Error('TELEGRAM_BOT_TOKEN no configurado');
+  }
+  return new TelegramAdapter(token);
+}
+
+async function getChannelAdapterForFlow(channel, tenantId) {
+  if (channel === 'telegram') {
+    return getTelegramAdapterForFlow();
+  }
+  if (channel === 'whatsapp') {
+    return WhatsAppAdapter.forTenant(tenantId);
+  }
+  throw new Error('Canal no soportado');
+}
+
+async function getReplyTargetForConversation(tenantId, conversation) {
+  if (conversation.channel === 'whatsapp') {
+    const target = await getMessageTarget(tenantId, conversation.lead_id).catch(() => null);
+    if (target?.phone || target?.bsuid) {
+      return target;
+    }
+    if (conversation.lead_phone || conversation.bsuid) {
+      return {
+        phone: conversation.lead_phone || null,
+        bsuid: conversation.bsuid || null,
+        preferPhone: Boolean(conversation.lead_phone),
+      };
+    }
+    throw new Error('No hay target de WhatsApp disponible para esta conversación');
+  }
+
+  if (!conversation.lead_phone) {
+    throw new Error('No hay target disponible para esta conversación');
+  }
+
+  return conversation.lead_phone;
+}
+
+async function resolveResumeNode({ tenantId, session, requestedNodeKey = null }) {
+  if (requestedNodeKey) {
+    const requestedNode = await getFlowNodeByKey(tenantId, requestedNodeKey);
+    if (!requestedNode) {
+      throw new Error('El nodo elegido para reanudar no existe o está inactivo');
+    }
+    return requestedNode;
+  }
+
+  const currentNode = session?.current_node_key
+    ? await getFlowNodeByKey(tenantId, session.current_node_key)
+    : null;
+
+  if (currentNode && !(currentNode.type === 'action' && currentNode.action_type === 'escalate')) {
+    return currentNode;
+  }
+
+  const history = Array.isArray(parseJson(session?.context, {}).history)
+    ? parseJson(session.context, {}).history
+    : [];
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const nodeKey = history[index]?.node_key;
+    if (!nodeKey) continue;
+    const candidate = await getFlowNodeByKey(tenantId, nodeKey);
+    if (candidate && !(candidate.type === 'action' && candidate.action_type === 'escalate')) {
+      return candidate;
+    }
+  }
+
+  const startNode = await getStartNode(tenantId);
+  if (!startNode) {
+    throw new Error('No existe un nodo inicial activo para reanudar el bot');
+  }
+  return startNode;
+}
+
+async function resumeConversationBot({ tenantId, conversationId, nodeKey = null, actor = 'admin' }) {
+  const conversation = await getConversationById(tenantId, conversationId);
+  if (!conversation) {
+    throw new Error('Conversación no encontrada');
+  }
+
+  const lead = await getLeadById(tenantId, conversation.lead_id);
+  let session = await getLatestFlowSession(tenantId, conversation.id);
+  const resumeNode = await resolveResumeNode({ tenantId, session, requestedNodeKey: nodeKey });
+
+  const baseContext = parseJson(session?.context, {});
+  const history = Array.isArray(baseContext.history) ? baseContext.history : [];
+  const nextContext = {
+    ...baseContext,
+    pending_input_for: null,
+    last_error: null,
+    tag_on_next: false,
+    resumed_at: new Date().toISOString(),
+    resumed_by: actor,
+    history: history.length > 0 ? history : [buildHistoryEntry(resumeNode)],
+  };
+
+  if (nextContext.history[nextContext.history.length - 1]?.node_key !== resumeNode.node_key) {
+    nextContext.history = [...nextContext.history, buildHistoryEntry(resumeNode)];
+  }
+
+  await query(
+    `UPDATE flow_sessions
+     SET status = 'abandoned'
+     WHERE tenant_id = ? AND conversation_id = ? AND status = 'active'${session?.id ? ' AND id <> ?' : ''}`,
+    session?.id ? [tenantId, conversation.id, session.id] : [tenantId, conversation.id]
+  ).catch(() => {});
+
+  if (session) {
+    await updateFlowSession(session.id, {
+      current_node_key: resumeNode.node_key,
+      context: nextContext,
+      status: 'active',
+    });
+    session.current_node_key = resumeNode.node_key;
+    session.context = toJson(nextContext);
+    session.status = 'active';
+  } else {
+    session = await createFlowSession({
+      tenantId,
+      conversationId: conversation.id,
+      leadId: lead?.id || conversation.lead_id,
+      startNode: resumeNode,
+      context: nextContext,
+    });
+  }
+
+  await setConversationBotActive(tenantId, conversation.id, resumeNode.node_key);
+  await emitSessionUpdate(tenantId, session.id);
+
+  const channelAdapter = await getChannelAdapterForFlow(conversation.channel, tenantId);
+  const replyTarget = await getReplyTargetForConversation(tenantId, conversation);
+  const result = await runFlowEngine({
+    tenant_id: tenantId,
+    conversation_id: conversation.id,
+    lead_id: lead?.id || conversation.lead_id,
+    message_text: '',
+    channel: conversation.channel,
+    content_type: 'system',
+    incoming: {
+      senderId: null,
+      senderName: null,
+      text: '',
+      contentType: 'system',
+      replyTarget,
+      metadataSource: 'manual-resume',
+    },
+  });
+
+  if (result.tag_analysis_pending && result.session_id) {
+    const nextContext = {
+      ...(result.session_context || {}),
+    };
+    delete nextContext.tag_on_next;
+    await updateFlowSession(result.session_id, { context: nextContext });
+  }
+
+  if (Array.isArray(result.responses) && result.responses.length > 0) {
+    await sendResponses(
+      channelAdapter,
+      replyTarget,
+      conversation.id,
+      tenantId,
+      result.responses
+    );
+  }
+
+  return {
+    session_id: session.id,
+    resumed_node_key: resumeNode.node_key,
+    resumed_node_name: resumeNode.name,
+    action_taken: result.action_taken || 'manual-resume',
+    responses_sent: result.responses?.length || 0,
+  };
 }
 
 async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
@@ -1397,101 +2154,30 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
   broadcast('conversation:change', { id: conversation.id, reason: 'inbound-message' }, tenantId);
   broadcast('message:change', { conversationId: conversation.id, messageId: inboundMessageId, direction: 'inbound' }, tenantId);
 
-  if (['image', 'document'].includes(incoming.contentType)) {
-    const paymentSettings = await getPaymentSettings(tenantId).catch(() => null);
-    if (paymentSettings?.payment_proof_debug_mode) {
-      const diagnosticResponse = await runPaymentProofDiagnostic({
-        tenantId,
-        conversation,
-        incoming: { ...incoming, channel: channelAdapter },
-      }).catch((err) => {
-        console.error('[FlowEngine] Payment proof diagnostic failed:', err.message);
-        return {
-          type: 'text',
-          text: `Modo prueba de comprobantes: ocurrió un error interno.\n${err.message}`,
-        };
-      });
-
-      if (diagnosticResponse) {
-        await sendResponses(
-          channelAdapter,
-          incoming.replyTarget || incoming.senderId,
-          conversation.id,
-          tenantId,
-          [diagnosticResponse]
-        );
-        return {
-          lead,
-          conversation,
-          response_text: diagnosticResponse.text || '',
-          buttons: [],
-          action_taken: 'payment_proof_debug',
-          session_id: null,
-          session_context: null,
-          tag_analysis_pending: false,
-          responses: [diagnosticResponse],
-        };
-      }
-    }
+  const bufferKey = getTextBufferKey(tenantId, conversation.id);
+  if (!shouldBufferIncomingText(incoming)) {
+    clearBufferedText(bufferKey);
   }
 
-  const result = await runFlowEngine({
-    tenant_id: tenantId,
-    conversation_id: conversation.id,
-    lead_id: lead.id,
-    message_text: incoming.text,
-    channel: incoming.channel || channelAdapter.channelName,
-    content_type: incoming.contentType,
-    incoming: { ...incoming, channel: channelAdapter },
-  });
-
-  if (result.tag_analysis_pending && result.session_id) {
-    const latestConversation = await getConversationById(tenantId, conversation.id);
-    const latestLead = await getLeadById(tenantId, lead.id);
-    const workshop = latestConversation?.workshop_id
-      ? await getLatestWorkshop(tenantId)
-      : null;
-
-    await analyzeAndTagInboundMessage({
+  if (shouldBufferIncomingText(incoming)) {
+    return bufferIncomingText({
       tenantId,
-      lead: latestLead || lead,
-      conversation: latestConversation || conversation,
-      workshop,
-      messageId: inboundMessageId,
-      messageText: incoming.text,
-    }).catch((err) => {
-      console.error('[FlowEngine] Tagging skipped:', err.message);
-    });
-
-    const nextContext = {
-      ...(result.session_context || {}),
-    };
-    delete nextContext.tag_on_next;
-    await updateFlowSession(result.session_id, { context: nextContext });
-  }
-
-  await recalculateLeadScore({
-    tenantId,
-    leadId: lead.id,
-  }).catch((err) => {
-    console.error('[FlowEngine] Scoring skipped:', err.message);
-  });
-
-  if (Array.isArray(result.responses) && result.responses.length > 0) {
-    await sendResponses(
+      lead,
+      conversation,
+      incoming,
       channelAdapter,
-      incoming.replyTarget || incoming.senderId,
-      conversation.id,
-      tenantId,
-      result.responses
-    );
+      inboundMessageId,
+    });
   }
 
-  return {
+  return processFlowAfterInboundPersist({
+    tenantId,
     lead,
     conversation,
-    ...result,
-  };
+    incoming,
+    channelAdapter,
+    inboundMessageId,
+  });
 }
 
 module.exports = {
@@ -1499,4 +2185,5 @@ module.exports = {
   runFlowEngine,
   formatMessageWithWorkshop,
   getCurrentNodeEnteredAt,
+  resumeConversationBot,
 };

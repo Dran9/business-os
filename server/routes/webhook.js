@@ -245,4 +245,40 @@ router.post('/whatsapp', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// BRIDGE TEMPORAL — endpoint interno para recibir mensajes reenviados por agenda4.0
+//
+// CONTEXTO: business-os no tiene webhook directo de Meta porque comparte el número
+// de WhatsApp de agenda4.0. agenda4.0 reenvía aquí los mensajes de talleres.
+//
+// PARA ELIMINAR ESTE BRIDGE cuando business-os tenga WA propio:
+//   1. Borrar esta ruta POST /internal completa
+//   2. Registrar el nuevo número en Meta y apuntar el webhook a /api/webhook/whatsapp
+//   3. Quitar INTERNAL_SECRET del hPanel de business-os
+//   4. Quitar BUSINESS_OS_URL e INTERNAL_SECRET del hPanel de agenda4.0
+//
+// Variable de entorno requerida en hPanel de business-os:
+//   INTERNAL_SECRET = (misma clave que en agenda4.0)
+// ═══════════════════════════════════════════════════════════════════════════════
+router.post('/internal', async (req, res) => {
+  const secret = process.env.INTERNAL_SECRET;
+  const auth = req.headers['authorization'];
+
+  if (!secret || auth !== `Bearer ${secret}`) {
+    console.warn('[webhook/internal] Acceso denegado — Authorization inválido');
+    return res.sendStatus(401);
+  }
+
+  // Responder rápido antes de procesar (igual que el webhook de Meta)
+  res.sendStatus(200);
+
+  try {
+    // Reutiliza el mismo pipeline que usaría si viniera directo de Meta
+    await handleWhatsAppWebhook(req.body, DEFAULT_TENANT_ID);
+  } catch (err) {
+    console.error('[webhook/internal] Error:', err.stack || err.message || err);
+  }
+});
+// ═══ FIN BRIDGE TEMPORAL ═══════════════════════════════════════════════════════
+
 module.exports = router;

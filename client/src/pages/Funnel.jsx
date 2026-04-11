@@ -1,25 +1,59 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Link } from 'react-router-dom'
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatDate, timeAgo } from '../utils/dates'
-import ConfirmButton from '../components/ui/ConfirmButton'
 
-const TYPE_LABELS = {
-  message: 'Mensaje',
-  open_question_ai: 'Pregunta AI',
-  open_question_detect: 'Pregunta detect',
-  options: 'Opciones',
-  action: 'Acción',
-}
+// ── Tipos y metadata ──────────────────────────────────────────────────────
+const NODE_TYPES = [
+  { value: 'message',              label: 'Mensaje',   icon: 'message-circle', help: 'El bot habla y sigue solo, sin esperar respuesta.' },
+  { value: 'open_question_ai',     label: 'IA',        icon: 'brain',          help: 'El bot pregunta y la IA procesa la respuesta libre.' },
+  { value: 'open_question_detect', label: 'Detección', icon: 'split',          help: 'El bot busca palabras clave y enruta según lo que detecte.' },
+  { value: 'options',              label: 'Botones',   icon: 'list-todo',      help: 'El cliente elige entre botones. Máximo 3 opciones.' },
+  { value: 'action',               label: 'Acción',    icon: 'zap',            help: 'El sistema hace algo automático, sin pedir input al cliente.' },
+]
 
-const TYPE_ICONS = {
-  message: '💬',
-  open_question_ai: '🧠',
-  open_question_detect: '🔎',
-  options: '↳',
-  action: '⚙️',
-}
+const TYPE_LABEL = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.label]))
+const TYPE_ICON  = Object.fromEntries(NODE_TYPES.map((t) => [t.value, t.icon]))
+
+const ACTION_TYPES = [
+  {
+    value: 'check_workshop_capacity',
+    label: 'Verificar cupos del taller',
+    help: 'Revisa si quedan lugares en el próximo taller activo. Si hay cupos → sigue al paso configurado. Si está lleno → se desvía automáticamente a nodo_09_sin_cupos.',
+    icon: 'users',
+  },
+  {
+    value: 'send_qr',
+    label: 'Enviar QR de pago',
+    help: 'Busca el QR que corresponde al monto del lead y lo envía como imagen. Configurá los QR en Configuración del taller.',
+    icon: 'qr-code',
+  },
+  {
+    value: 'process_payment_proof',
+    label: 'Procesar comprobante (OCR)',
+    help: 'Analiza la foto que mandó el cliente con Google Vision. Cruza monto, cuenta y fecha contra los datos del lead. Si falla → nodo_10_espera_pago.',
+    icon: 'scan-line',
+  },
+  {
+    value: 'escalate',
+    label: 'Escalar a atención humana',
+    help: 'Detiene el bot, marca la conversación como escalada y envía notificación Pushinator a tu celular. El cliente recibe un aviso automático.',
+    icon: 'bell-ring',
+  },
+]
+
+const ACTION_LABEL = Object.fromEntries(ACTION_TYPES.map((a) => [a.value, a.label]))
+
+const HARDCODED_KEYS = ['nodo_09_sin_cupos', 'nodo_10_espera_pago', 'nodo_escalacion']
 
 const SESSION_STATUS_LABELS = {
   active: 'Activa',
@@ -28,47 +62,9 @@ const SESSION_STATUS_LABELS = {
   abandoned: 'Abandonada',
 }
 
-const EMPTY_FORM = {
-  node_key: '',
-  name: '',
-  type: 'message',
-  message_text: '',
-  ai_system_prompt: '',
-  keywords: [],
-  keywordDraft: '',
-  options: [],
-  next_node_key: '',
-  keyword_match_next: '',
-  keyword_nomatch_next: '',
-  action_type: '',
-  position: 0,
-  active: true,
-}
-
-function normalizeNodeForm(node) {
-  if (!node) return EMPTY_FORM
-  return {
-    node_key: node.node_key || '',
-    name: node.name || '',
-    type: node.type || 'message',
-    message_text: node.message_text || '',
-    ai_system_prompt: node.ai_system_prompt || '',
-    keywords: Array.isArray(node.keywords) ? node.keywords : [],
-    keywordDraft: '',
-    options: Array.isArray(node.options) ? node.options : [],
-    next_node_key: node.next_node_key || '',
-    keyword_match_next: node.keyword_match_next || '',
-    keyword_nomatch_next: node.keyword_nomatch_next || '',
-    action_type: node.action_type || '',
-    position: Number(node.position || 0),
-    active: node.active !== false,
-  }
-}
-
-function truncateText(value, max = 80) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim()
-  if (text.length <= max) return text
-  return `${text.slice(0, max - 1)}…`
+// ── Helpers ───────────────────────────────────────────────────────────────
+function sessionLeadLabel(session) {
+  return session.lead_name || session.lead_phone || 'Lead sin identificar'
 }
 
 function badgeClassForSession(status) {
@@ -78,37 +74,201 @@ function badgeClassForSession(status) {
   return 'badge'
 }
 
-function nextNodeOptions(nodes, currentKey) {
-  return nodes
-    .filter((node) => node.node_key !== currentKey)
-    .map((node) => ({ value: node.node_key, label: `${node.node_key} · ${node.name}` }))
+function truncateText(value, max = 80) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim()
+  if (text.length <= max) return text
+  return `${text.slice(0, max - 1)}…`
 }
 
-function sessionLeadLabel(session) {
-  return session.lead_name || session.lead_phone || 'Lead sin identificar'
+function normalizeKeywords(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    return value.split(',').map((k) => k.trim()).filter(Boolean)
+  }
+  return []
 }
 
+function normalizeOptions(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((opt) => ({
+    label: opt?.label || '',
+    next_node_key: opt?.next_node_key || '',
+  }))
+}
+
+function normalizeNode(raw) {
+  return {
+    ...raw,
+    name: raw.name || '',
+    message_text: raw.message_text || '',
+    ai_system_prompt: raw.ai_system_prompt || '',
+    keywords: normalizeKeywords(raw.keywords),
+    options: normalizeOptions(raw.options),
+    next_node_key: raw.next_node_key || '',
+    keyword_match_next: raw.keyword_match_next || '',
+    keyword_nomatch_next: raw.keyword_nomatch_next || '',
+    action_type: raw.action_type || '',
+    position: Number(raw.position || 0),
+    active: raw.active !== false,
+  }
+}
+
+function buildPayload(node) {
+  const base = {
+    node_key: node.node_key,
+    name: (node.name || '').trim(),
+    type: node.type,
+    message_text: node.message_text || '',
+    ai_system_prompt: null,
+    keywords: null,
+    options: null,
+    next_node_key: null,
+    keyword_match_next: null,
+    keyword_nomatch_next: null,
+    action_type: null,
+    position: Number(node.position || 0),
+    active: node.active !== false,
+  }
+  if (node.type === 'open_question_ai') {
+    base.ai_system_prompt = node.ai_system_prompt || ''
+    base.next_node_key = node.next_node_key || null
+  } else if (node.type === 'open_question_detect') {
+    base.keywords = node.keywords || []
+    base.keyword_match_next = node.keyword_match_next || null
+    base.keyword_nomatch_next = node.keyword_nomatch_next || null
+  } else if (node.type === 'options') {
+    base.options = (node.options || []).filter((o) => (o.label || '').trim())
+  } else if (node.type === 'action') {
+    base.action_type = node.action_type || null
+    base.next_node_key = node.next_node_key || null
+  } else {
+    base.next_node_key = node.next_node_key || null
+  }
+  return base
+}
+
+function generateNodeKey(existing) {
+  const keys = new Set((existing || []).map((n) => n.node_key))
+  let i = existing.length + 1
+  while (keys.has(`nodo_${String(i).padStart(2, '0')}`)) i += 1
+  return `nodo_${String(i).padStart(2, '0')}`
+}
+
+// ── Ícono inline (no dep) ─────────────────────────────────────────────────
+const ICONS = {
+  'message-circle': <><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></>,
+  'brain': <><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></>,
+  'split': <><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.17-2.83L3 3"/><path d="m21 3-7.83 7.83A4 4 0 0 0 12 13.67"/></>,
+  'list-todo': <><rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></>,
+  'zap': <><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></>,
+  'trash-2': <><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></>,
+  'plus': <><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+  'x': <><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+  'check': <><polyline points="20 6 9 17 4 12"/></>,
+  'chevron-down': <><polyline points="6 9 12 15 18 9"/></>,
+  'arrow-up': <><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></>,
+  'arrow-down': <><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></>,
+  'save': <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>,
+  'bold': <><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></>,
+  'italic': <><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></>,
+  'strikethrough': <><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" y1="12" x2="20" y2="12"/></>,
+  'lock': <><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>,
+  'alert-triangle': <><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></>,
+  'users': <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+  'qr-code': <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M20 14h1"/><path d="M14 20h3"/><path d="M20 17v4"/></>,
+  'scan-line': <><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></>,
+  'bell-ring': <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/><path d="M22 8c0-2.3-.8-4.3-2-6"/></>,
+}
+
+function IconConfirmButton({ onConfirm }) {
+  const [confirming, setConfirming] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!confirming) return undefined
+    function handleClickOutside(event) {
+      if (ref.current && !ref.current.contains(event.target)) {
+        setConfirming(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [confirming])
+
+  function handleClick() {
+    if (confirming) {
+      setConfirming(false)
+      onConfirm()
+    } else {
+      setConfirming(true)
+    }
+  }
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="fnl-icon-btn danger"
+      title={confirming ? 'Confirmar eliminación' : 'Eliminar paso'}
+      onClick={handleClick}
+      style={confirming ? { color: 'var(--color-danger)' } : undefined}
+    >
+      <Icon name={confirming ? 'check' : 'trash-2'} />
+    </button>
+  )
+}
+
+function Icon({ name, size = 14 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ flexShrink: 0 }}
+    >
+      {ICONS[name] || null}
+    </svg>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//   MAIN COMPONENT
+// ══════════════════════════════════════════════════════════════════════════
 export default function Funnel() {
   const [activeTab, setActiveTab] = useState('flow')
+
+  // Flow state
   const [nodes, setNodes] = useState([])
-  const [sessions, setSessions] = useState([])
   const [loadingNodes, setLoadingNodes] = useState(true)
+  const [dirtyIds, setDirtyIds] = useState(() => new Set())
+  const [savingAll, setSavingAll] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [saveToast, setSaveToast] = useState('')
+  const [activePillId, setActivePillId] = useState(null)
+
+  // Sessions state
+  const [sessions, setSessions] = useState([])
   const [loadingSessions, setLoadingSessions] = useState(true)
-  const [savingNode, setSavingNode] = useState(false)
-  const [selectedNode, setSelectedNode] = useState(null)
-  const [form, setForm] = useState(EMPTY_FORM)
   const [selectedSessionId, setSelectedSessionId] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
   const [loadingSessionDetail, setLoadingSessionDetail] = useState(false)
   const [sessionSearch, setSessionSearch] = useState('')
   const deferredSessionSearch = useDeferredValue(sessionSearch)
 
+  // ── Load nodes/sessions ────────────────────────────────────────────────
   const loadNodes = useCallback(() => {
     setLoadingNodes(true)
     return apiGet('/api/funnel/nodes')
       .then((items) => {
         startTransition(() => {
-          setNodes(Array.isArray(items) ? items : [])
+          const normalized = (Array.isArray(items) ? items : []).map(normalizeNode)
+          setNodes(normalized)
+          setDirtyIds(new Set())
         })
       })
       .catch(() => {
@@ -136,7 +296,6 @@ export default function Funnel() {
       setSelectedSession(null)
       return Promise.resolve()
     }
-
     setLoadingSessionDetail(true)
     return apiGet(`/api/funnel/sessions/${sessionId}`)
       .then((item) => {
@@ -160,8 +319,7 @@ export default function Funnel() {
       setSelectedSessionId(sessions[0].id)
       return
     }
-
-    if (selectedSessionId && !sessions.some((session) => session.id === selectedSessionId)) {
+    if (selectedSessionId && !sessions.some((s) => s.id === selectedSessionId)) {
       setSelectedSessionId(sessions[0]?.id || null)
     }
   }, [sessions, selectedSessionId])
@@ -192,122 +350,147 @@ export default function Funnel() {
     ))
   }, [deferredSessionSearch, sessions])
 
-  function handleNewNode() {
-    const nextPosition = nodes.length > 0 ? Math.max(...nodes.map((node) => Number(node.position || 0))) + 10 : 0
-    setSelectedNode(null)
-    setForm({ ...EMPTY_FORM, position: nextPosition })
-  }
+  // ── Editor helpers ─────────────────────────────────────────────────────
+  const markDirty = useCallback((id) => {
+    setDirtyIds((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+  }, [])
 
-  function handleEditNode(node) {
-    setSelectedNode(node)
-    setForm(normalizeNodeForm(node))
-  }
+  const updateNode = useCallback((id, patch) => {
+    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)))
+    markDirty(id)
+  }, [markDirty])
 
-  function handleCloseForm() {
-    setSelectedNode(null)
-    setForm(EMPTY_FORM)
-  }
-
-  function handleFieldChange(event) {
-    const { name, value, type, checked } = event.target
-    setForm((current) => ({
-      ...current,
-      [name]: type === 'checkbox' ? checked : value,
-    }))
-  }
-
-  function handleOptionChange(index, field, value) {
-    setForm((current) => ({
-      ...current,
-      options: current.options.map((option, optionIndex) => (
-        optionIndex === index ? { ...option, [field]: value } : option
-      )),
-    }))
-  }
-
-  function handleAddOption() {
-    setForm((current) => ({
-      ...current,
-      options: [...current.options, { label: '', next_node_key: '' }],
-    }))
-  }
-
-  function handleRemoveOption(index) {
-    setForm((current) => ({
-      ...current,
-      options: current.options.filter((_, optionIndex) => optionIndex !== index),
-    }))
-  }
-
-  function handleAddKeyword() {
-    const keyword = form.keywordDraft.trim()
-    if (!keyword) return
-    setForm((current) => ({
-      ...current,
-      keywords: [...current.keywords, keyword],
-      keywordDraft: '',
-    }))
-  }
-
-  function handleRemoveKeyword(keywordToRemove) {
-    setForm((current) => ({
-      ...current,
-      keywords: current.keywords.filter((keyword) => keyword !== keywordToRemove),
-    }))
-  }
-
-  async function handleSaveNode(event) {
-    event.preventDefault()
-    setSavingNode(true)
-    try {
-      const payload = {
-        node_key: form.node_key.trim(),
-        name: form.name.trim(),
-        type: form.type,
-        message_text: form.message_text,
-        ai_system_prompt: form.type === 'open_question_ai' ? form.ai_system_prompt : null,
-        keywords: form.type === 'open_question_detect' ? form.keywords : null,
-        options: form.type === 'options' ? form.options : null,
-        next_node_key: ['message', 'action', 'open_question_ai'].includes(form.type) ? (form.next_node_key || null) : null,
-        keyword_match_next: form.type === 'open_question_detect' ? (form.keyword_match_next || null) : null,
-        keyword_nomatch_next: form.type === 'open_question_detect' ? (form.keyword_nomatch_next || null) : null,
-        action_type: form.type === 'action' ? (form.action_type || null) : null,
-        position: Number(form.position || 0),
-        active: form.active,
-      }
-
-      if (selectedNode?.id) {
-        await apiPut(`/api/funnel/nodes/${selectedNode.id}`, payload)
-      } else {
-        await apiPost('/api/funnel/nodes', payload)
-      }
-
-      await loadNodes()
-      handleCloseForm()
-    } catch (err) {
-      alert(err.message)
-    } finally {
-      setSavingNode(false)
+  const handleAddNode = useCallback(async () => {
+    setSaveError('')
+    const nextPosition = nodes.length > 0
+      ? Math.max(...nodes.map((n) => Number(n.position || 0))) + 10
+      : 10
+    const nodeKey = generateNodeKey(nodes)
+    const payload = {
+      node_key: nodeKey,
+      name: 'Nuevo paso',
+      type: 'message',
+      message_text: '',
+      position: nextPosition,
+      active: true,
     }
-  }
+    try {
+      const created = await apiPost('/api/funnel/nodes', payload)
+      const normalized = normalizeNode(created)
+      setNodes((prev) => [...prev, normalized])
+      setActivePillId(normalized.id)
+      // Scroll into view after render
+      setTimeout(() => {
+        const el = document.getElementById(`fnl-card-${normalized.id}`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 50)
+    } catch (err) {
+      setSaveError(err.message || 'No se pudo crear el paso')
+    }
+  }, [nodes])
 
-  async function handleDeleteNode(node) {
+  const handleDeleteNode = useCallback(async (node) => {
+    setSaveError('')
     try {
       await apiDelete(`/api/funnel/nodes/${node.id}`)
-      await loadNodes()
-      if (selectedNode?.id === node.id) {
-        handleCloseForm()
-      }
+      setNodes((prev) => prev.filter((n) => n.id !== node.id))
+      setDirtyIds((prev) => {
+        const next = new Set(prev)
+        next.delete(node.id)
+        return next
+      })
     } catch (err) {
-      alert(err.message)
+      setSaveError(err.message || 'No se pudo eliminar el paso')
     }
+  }, [])
+
+  const handleMoveNode = useCallback((id, direction) => {
+    setNodes((prev) => {
+      const index = prev.findIndex((n) => n.id === id)
+      if (index === -1) return prev
+      const swapWith = direction === 'up' ? index - 1 : index + 1
+      if (swapWith < 0 || swapWith >= prev.length) return prev
+      const a = prev[index]
+      const b = prev[swapWith]
+      const posA = Number(a.position || 0)
+      const posB = Number(b.position || 0)
+      setDirtyIds((d) => {
+        const next = new Set(d)
+        next.add(a.id)
+        next.add(b.id)
+        return next
+      })
+      const next = [...prev]
+      next[index] = { ...a, position: posB }
+      next[swapWith] = { ...b, position: posA }
+      next.sort((x, y) => Number(x.position) - Number(y.position))
+      return next
+    })
+  }, [])
+
+  const validateNode = (node) => {
+    if (!node.name?.trim()) return `"${node.node_key}" necesita un nombre`
+    if (node.type === 'open_question_ai' && !node.ai_system_prompt?.trim()) {
+      return `"${node.name}" necesita una instrucción para la IA`
+    }
+    if (node.type === 'action' && !node.action_type) {
+      return `"${node.name}" necesita elegir una acción`
+    }
+    return null
   }
 
-  const nodeChoices = useMemo(
-    () => nextNodeOptions(nodes, selectedNode?.node_key || form.node_key),
-    [form.node_key, nodes, selectedNode?.node_key]
-  )
+  const handleSaveAll = useCallback(async () => {
+    if (savingAll) return
+    setSaveError('')
+    setSaveToast('')
+    const dirty = nodes.filter((n) => dirtyIds.has(n.id))
+    if (dirty.length === 0) {
+      setSaveToast('Nada para guardar')
+      setTimeout(() => setSaveToast(''), 1800)
+      return
+    }
+    for (const node of dirty) {
+      const err = validateNode(node)
+      if (err) {
+        setSaveError(err)
+        return
+      }
+    }
+    setSavingAll(true)
+    try {
+      const results = await Promise.all(
+        dirty.map((node) => apiPut(`/api/funnel/nodes/${node.id}`, buildPayload(node))
+          .then((updated) => ({ id: node.id, updated: normalizeNode(updated) }))
+        )
+      )
+      setNodes((prev) => {
+        const byId = new Map(results.map((r) => [r.id, r.updated]))
+        return prev.map((n) => byId.get(n.id) || n)
+      })
+      setDirtyIds(new Set())
+      setSaveToast(`${dirty.length} ${dirty.length === 1 ? 'cambio guardado' : 'cambios guardados'}`)
+      setTimeout(() => setSaveToast(''), 2200)
+    } catch (err) {
+      setSaveError(err.message || 'Error al guardar')
+    } finally {
+      setSavingAll(false)
+    }
+  }, [dirtyIds, nodes, savingAll])
 
+  // ── Warnings de nodos hardcoded faltantes ──────────────────────────────
+  const missingHardcoded = useMemo(() => {
+    const keys = new Set(nodes.map((n) => n.node_key))
+    return HARDCODED_KEYS.filter((k) => !keys.has(k))
+  }, [nodes])
+
+  // ══════════════════════════════════════════════════════════════════════
+  //   RENDER
+  // ══════════════════════════════════════════════════════════════════════
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
@@ -316,9 +499,6 @@ export default function Funnel() {
           <span className={`live-indicator ${connected ? 'connected' : ''}`}>
             {connected ? 'En vivo' : 'Reconectando'}
           </span>
-          <button type="button" className="btn btn-primary" onClick={handleNewNode}>
-            Nuevo nodo
-          </button>
         </div>
       </div>
 
@@ -340,413 +520,776 @@ export default function Funnel() {
       </div>
 
       {activeTab === 'flow' ? (
-        <div className="funnel-builder-layout mt-4">
-          <div className="funnel-node-list">
-            {loadingNodes ? (
-              <p className="text-muted">Cargando nodos...</p>
-            ) : nodes.length === 0 ? (
-              <div className="card text-muted">No hay nodos cargados todavía.</div>
-            ) : nodes.map((node) => (
-              <div key={node.id} className="funnel-node-card">
-                <div className="funnel-node-head">
-                  <div>
-                    <div className="funnel-node-kicker">{node.node_key}</div>
-                    <div className="font-semibold">{node.name}</div>
-                  </div>
-                  <span className="badge badge-info">
-                    {TYPE_ICONS[node.type] || '•'} {TYPE_LABELS[node.type] || node.type}
-                  </span>
-                </div>
+        <FlowEditor
+          nodes={nodes}
+          loading={loadingNodes}
+          dirtyIds={dirtyIds}
+          savingAll={savingAll}
+          saveError={saveError}
+          saveToast={saveToast}
+          activePillId={activePillId}
+          setActivePillId={setActivePillId}
+          updateNode={updateNode}
+          onAddNode={handleAddNode}
+          onDeleteNode={handleDeleteNode}
+          onMoveNode={handleMoveNode}
+          onSaveAll={handleSaveAll}
+          missingHardcoded={missingHardcoded}
+        />
+      ) : (
+        <SessionsView
+          sessionSearch={sessionSearch}
+          setSessionSearch={setSessionSearch}
+          loadingSessions={loadingSessions}
+          filteredSessions={filteredSessions}
+          selectedSessionId={selectedSessionId}
+          setSelectedSessionId={setSelectedSessionId}
+          loadingSessionDetail={loadingSessionDetail}
+          selectedSession={selectedSession}
+        />
+      )}
+    </div>
+  )
+}
 
-                <div className="funnel-node-preview">
-                  {truncateText(node.message_text || 'Sin texto configurado')}
-                </div>
+// ══════════════════════════════════════════════════════════════════════════
+//   FLOW EDITOR
+// ══════════════════════════════════════════════════════════════════════════
+function FlowEditor({
+  nodes,
+  loading,
+  dirtyIds,
+  savingAll,
+  saveError,
+  saveToast,
+  activePillId,
+  setActivePillId,
+  updateNode,
+  onAddNode,
+  onDeleteNode,
+  onMoveNode,
+  onSaveAll,
+  missingHardcoded,
+}) {
+  const dirtyCount = dirtyIds.size
 
-                <div className="funnel-branch-row">
-                  {Array.isArray(node.options) && node.options.length > 0 && node.options.map((option) => (
-                    <span key={`${node.id}-${option.label}`} className="tag tag-custom">
-                      {option.label} → {option.next_node_key}
-                    </span>
-                  ))}
-                  {node.keyword_match_next ? (
-                    <span className="tag tag-stage">
-                      Match → {node.keyword_match_next}
-                    </span>
-                  ) : null}
-                  {node.keyword_nomatch_next ? (
-                    <span className="tag tag-objection">
-                      No match → {node.keyword_nomatch_next}
-                    </span>
-                  ) : null}
-                  {!node.options?.length && !node.keyword_match_next && node.next_node_key ? (
-                    <span className="tag tag-custom">
-                      Sigue → {node.next_node_key}
-                    </span>
-                  ) : null}
-                </div>
+  return (
+    <div className="mt-4">
+      <div className="fnl-toolbar mb-4" style={{ marginBottom: 'var(--space-4)' }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={onSaveAll}
+          disabled={savingAll || dirtyCount === 0}
+        >
+          <Icon name="save" size={14} />
+          {savingAll ? 'Guardando...' : `Guardar${dirtyCount > 0 ? ` (${dirtyCount})` : ''}`}
+        </button>
+        {dirtyCount > 0 && !savingAll ? (
+          <span className="fnl-dirty-indicator">
+            <Icon name="alert-triangle" size={12} />
+            {dirtyCount} {dirtyCount === 1 ? 'cambio sin guardar' : 'cambios sin guardar'}
+          </span>
+        ) : null}
+        {saveToast ? (
+          <span className="fnl-dirty-indicator" style={{ color: 'var(--color-success)' }}>
+            <Icon name="check" size={12} />
+            {saveToast}
+          </span>
+        ) : null}
+      </div>
 
-                <div className="funnel-node-actions">
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleEditNode(node)}>
-                    Editar
-                  </button>
-                  <ConfirmButton size="sm" label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDeleteNode(node)} />
-                </div>
-              </div>
-            ))}
-          </div>
+      {saveError ? (
+        <div className="fnl-hardcoded-warn" style={{
+          background: 'var(--color-danger-bg)',
+          borderColor: 'var(--color-danger)',
+          color: 'var(--color-danger)',
+        }}>
+          <Icon name="alert-triangle" size={14} />
+          <span>{saveError}</span>
+        </div>
+      ) : null}
 
-          <div className="funnel-editor-panel">
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title">{selectedNode ? 'Editar nodo' : 'Nuevo nodo'}</h2>
-              </div>
-
-              <form onSubmit={handleSaveNode}>
-                <div className="funnel-form-grid">
-                  <div className="form-group">
-                    <label>node_key</label>
-                    <input
-                      className="input"
-                      name="node_key"
-                      value={form.node_key}
-                      onChange={handleFieldChange}
-                      placeholder="nodo_13"
-                      disabled={Boolean(selectedNode)}
-                      required
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Nombre</label>
-                    <input
-                      className="input"
-                      name="name"
-                      value={form.name}
-                      onChange={handleFieldChange}
-                      required
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Tipo</label>
-                    <select className="input" name="type" value={form.type} onChange={handleFieldChange}>
-                      {Object.entries(TYPE_LABELS).map(([value, label]) => (
-                        <option key={value} value={value}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Posición</label>
-                    <input
-                      className="input"
-                      name="position"
-                      type="number"
-                      value={form.position}
-                      onChange={handleFieldChange}
-                    />
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label>message_text</label>
-                  <textarea
-                    className="input textarea"
-                    rows="6"
-                    name="message_text"
-                    value={form.message_text}
-                    onChange={handleFieldChange}
-                    placeholder="Texto que enviará el bot"
-                  />
-                </div>
-
-                {form.type === 'open_question_ai' ? (
-                  <div className="form-group">
-                    <label>ai_system_prompt</label>
-                    <textarea
-                      className="input textarea"
-                      rows="6"
-                      name="ai_system_prompt"
-                      value={form.ai_system_prompt}
-                      onChange={handleFieldChange}
-                    />
-                  </div>
-                ) : null}
-
-                {form.type === 'open_question_detect' ? (
-                  <div className="funnel-detect-grid">
-                    <div className="form-group">
-                      <label>Keywords</label>
-                      <div className="funnel-keyword-input">
-                        <input
-                          className="input"
-                          value={form.keywordDraft}
-                          onChange={(event) => setForm((current) => ({ ...current, keywordDraft: event.target.value }))}
-                          placeholder="Agregar keyword"
-                        />
-                        <button type="button" className="btn btn-secondary" onClick={handleAddKeyword}>
-                          Agregar
-                        </button>
-                      </div>
-                      <div className="funnel-chip-wrap">
-                        {form.keywords.map((keyword) => (
-                          <button
-                            key={keyword}
-                            type="button"
-                            className="tag tag-custom removable-tag"
-                            onClick={() => handleRemoveKeyword(keyword)}
-                          >
-                            {keyword} ×
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="form-group">
-                      <label>Si hay match</label>
-                      <select className="input" name="keyword_match_next" value={form.keyword_match_next} onChange={handleFieldChange}>
-                        <option value="">Sin siguiente nodo</option>
-                        {nodeChoices.map((option) => (
-                          <option key={`match-${option.value}`} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="form-group">
-                      <label>Si no hay match</label>
-                      <select className="input" name="keyword_nomatch_next" value={form.keyword_nomatch_next} onChange={handleFieldChange}>
-                        <option value="">Sin siguiente nodo</option>
-                        {nodeChoices.map((option) => (
-                          <option key={`nomatch-${option.value}`} value={option.value}>{option.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                ) : null}
-
-                {form.type === 'options' ? (
-                  <div className="form-group">
-                    <div className="flex items-center justify-between gap-2">
-                      <label>Opciones</label>
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={handleAddOption}>
-                        Agregar opción
-                      </button>
-                    </div>
-                    <div className="funnel-option-list">
-                      {form.options.map((option, index) => (
-                        <div key={`option-${index}`} className="funnel-option-row">
-                          <input
-                            className="input"
-                            value={option.label || ''}
-                            onChange={(event) => handleOptionChange(index, 'label', event.target.value)}
-                            placeholder="Label"
-                          />
-                          <select
-                            className="input"
-                            value={option.next_node_key || ''}
-                            onChange={(event) => handleOptionChange(index, 'next_node_key', event.target.value)}
-                          >
-                            <option value="">Sin siguiente nodo</option>
-                            {nodeChoices.map((nodeOption) => (
-                              <option key={`option-next-${nodeOption.value}`} value={nodeOption.value}>
-                                {nodeOption.label}
-                              </option>
-                            ))}
-                          </select>
-                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleRemoveOption(index)}>
-                            Quitar
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                {['message', 'action', 'open_question_ai'].includes(form.type) ? (
-                  <div className="form-group">
-                    <label>Siguiente nodo</label>
-                    <select className="input" name="next_node_key" value={form.next_node_key} onChange={handleFieldChange}>
-                      <option value="">Sin siguiente nodo</option>
-                      {nodeChoices.map((option) => (
-                        <option key={`next-${option.value}`} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                ) : null}
-
-                {form.type === 'action' ? (
-                  <div className="form-group">
-                    <label>action_type</label>
-                    <input
-                      className="input"
-                      name="action_type"
-                      value={form.action_type}
-                      onChange={handleFieldChange}
-                      placeholder="send_qr, process_payment_proof, escalate..."
-                    />
-                  </div>
-                ) : null}
-
-                <div className="funnel-toggle-row">
-                  <label className="funnel-checkbox">
-                    <input
-                      type="checkbox"
-                      name="active"
-                      checked={form.active}
-                      onChange={handleFieldChange}
-                    />
-                    <span>Nodo activo</span>
-                  </label>
-                </div>
-
-                <div className="flex gap-2">
-                  <button type="submit" className="btn btn-primary" disabled={savingNode}>
-                    {savingNode ? 'Guardando...' : 'Guardar'}
-                  </button>
-                  <button type="button" className="btn btn-secondary" onClick={handleCloseForm}>
-                    Cancelar
-                  </button>
-                </div>
-              </form>
+      {missingHardcoded.length > 0 && nodes.length > 0 ? (
+        <div className="fnl-hardcoded-warn">
+          <Icon name="alert-triangle" size={14} />
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 'var(--space-1)' }}>
+              Faltan nodos de sistema que el motor referencia por nombre:
+            </div>
+            <div>
+              {missingHardcoded.map((k, i) => (
+                <span key={k}>
+                  <code className="fnl-inline-code">{k}</code>
+                  {i < missingHardcoded.length - 1 ? ', ' : ''}
+                </span>
+              ))}
             </div>
           </div>
         </div>
-      ) : (
-        <div className="mt-4">
-          <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
-            <input
-              className="input"
-              style={{ maxWidth: 280 }}
-              placeholder="Buscar lead, teléfono o nodo..."
-              value={sessionSearch}
-              onChange={(event) => setSessionSearch(event.target.value)}
-            />
-          </div>
+      ) : null}
 
-          <div className="crm-layout mt-4">
-            <div className="card">
-              <div className="card-header">
-                <h2 className="card-title">Sesiones activas</h2>
+      <div className="fnl-layout">
+        {/* Sidebar */}
+        <aside className="fnl-sidebar">
+          <div className="fnl-sidebar-title">Pasos del embudo</div>
+          {loading ? (
+            <div className="text-muted" style={{ padding: 'var(--space-3)' }}>Cargando...</div>
+          ) : nodes.length === 0 ? (
+            <div className="text-muted" style={{ padding: 'var(--space-3)' }}>Sin pasos todavía</div>
+          ) : (
+            nodes.map((n, i) => (
+              <button
+                type="button"
+                key={n.id}
+                className={`fnl-pill ${activePillId === n.id ? 'active' : ''}`}
+                onClick={() => {
+                  setActivePillId(n.id)
+                  const el = document.getElementById(`fnl-card-${n.id}`)
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }}
+              >
+                <div className="fnl-pill-num">{i + 1}</div>
+                <span className="fnl-pill-label">{n.name || 'Sin nombre'}</span>
+                {dirtyIds.has(n.id) ? <span className="fnl-pill-dirty" /> : null}
+              </button>
+            ))
+          )}
+          <button type="button" className="fnl-sidebar-add" onClick={onAddNode}>
+            <Icon name="plus" size={14} />
+            Agregar paso
+          </button>
+        </aside>
+
+        {/* Canvas */}
+        <div className="fnl-canvas">
+          {loading ? (
+            <div className="fnl-empty">Cargando nodos...</div>
+          ) : nodes.length === 0 ? (
+            <div className="fnl-empty">
+              No hay pasos configurados todavía. Agregá el primero para empezar.
+            </div>
+          ) : (
+            nodes.map((n, i) => (
+              <div key={n.id} style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <NodeCard
+                  node={n}
+                  index={i}
+                  total={nodes.length}
+                  nodes={nodes}
+                  dirty={dirtyIds.has(n.id)}
+                  updateNode={updateNode}
+                  onDelete={() => onDeleteNode(n)}
+                  onMoveUp={() => onMoveNode(n.id, 'up')}
+                  onMoveDown={() => onMoveNode(n.id, 'down')}
+                />
+                {i < nodes.length - 1 ? <div className="fnl-connector" /> : null}
               </div>
-              {loadingSessions ? (
-                <p className="text-muted">Cargando sesiones...</p>
-              ) : filteredSessions.length === 0 ? (
-                <p className="text-muted">No hay sesiones activas o escaladas.</p>
-              ) : (
-                <div className="table-container">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Lead</th>
-                        <th>Nodo actual</th>
-                        <th>Tiempo</th>
-                        <th>Estado</th>
-                        <th>Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredSessions.map((session) => (
-                        <tr
-                          key={session.id}
-                          className={selectedSessionId === session.id ? 'table-row-selected' : ''}
-                          onClick={() => setSelectedSessionId(session.id)}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <td>
-                            <div className="font-semibold">{sessionLeadLabel(session)}</div>
-                            <div className="text-xs text-muted">{session.lead_phone || session.channel}</div>
-                          </td>
-                          <td>
-                            <div className="font-semibold">{session.current_node_name || session.current_node_key}</div>
-                            <div className="text-xs text-muted">{session.current_node_key}</div>
-                          </td>
-                          <td>{session.current_node_entered_at ? timeAgo(session.current_node_entered_at) : '—'}</td>
-                          <td>
-                            <span className={badgeClassForSession(session.status)}>
-                              {SESSION_STATUS_LABELS[session.status] || session.status}
-                            </span>
-                          </td>
-                          <td>
-                            <Link className="btn btn-ghost btn-sm" to={`/conversations?conversationId=${session.conversation_id}`}>
-                              Ver conversación
-                            </Link>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//   NODE CARD
+// ══════════════════════════════════════════════════════════════════════════
+function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMoveUp, onMoveDown }) {
+  // Secciones expandibles
+  const [openSend, setOpenSend] = useState(true)
+  const [openProcess, setOpenProcess] = useState(false)
+  const [openRoute, setOpenRoute] = useState(false)
+
+  const textareaRef = useRef(null)
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+    }
+  }, [node.message_text])
+
+  // ── Badges ───────────────────────────────────────────────────────────
+  const typeMeta = NODE_TYPES.find((t) => t.value === node.type) || NODE_TYPES[0]
+  const destNode = nodes.find((x) => x.node_key === node.next_node_key)
+
+  const badges = []
+  badges.push(
+    <span key="type" className="fnl-badge fnl-badge-type">
+      <Icon name={typeMeta.icon} size={10} />
+      {typeMeta.label}
+    </span>
+  )
+  if (node.type === 'action' && node.action_type) {
+    badges.push(
+      <span key="action" className="fnl-badge fnl-badge-type">
+        {ACTION_LABEL[node.action_type] || node.action_type}
+      </span>
+    )
+  }
+  if (node.type === 'open_question_detect' && (node.keywords?.length || 0) > 0) {
+    badges.push(
+      <span key="kw" className="fnl-badge fnl-badge-dest">
+        {node.keywords.length} keyword{node.keywords.length === 1 ? '' : 's'}
+      </span>
+    )
+  }
+  if (node.type === 'options' && (node.options?.length || 0) > 0) {
+    badges.push(
+      <span key="btns" className="fnl-badge fnl-badge-dest">
+        {node.options.length}/3 botones
+      </span>
+    )
+  }
+  if (destNode) {
+    badges.push(
+      <span key="dest" className="fnl-badge fnl-badge-dest">
+        → {destNode.name || destNode.node_key}
+      </span>
+    )
+  }
+
+  // ── Handlers ─────────────────────────────────────────────────────────
+  const setType = (nextType) => {
+    const patch = { type: nextType }
+    if (nextType === 'options' && !(node.options || []).length) {
+      patch.options = [{ label: '', next_node_key: '' }]
+    }
+    updateNode(node.id, patch)
+  }
+
+  const insertWA = (char) => {
+    const ta = textareaRef.current
+    if (!ta) return
+    const s = ta.selectionStart
+    const e = ta.selectionEnd
+    const v = ta.value
+    const nextValue = s !== e
+      ? v.slice(0, s) + char + v.slice(s, e) + char + v.slice(e)
+      : v.slice(0, s) + char + char + v.slice(e)
+    updateNode(node.id, { message_text: nextValue })
+    requestAnimationFrame(() => {
+      if (!ta) return
+      ta.focus()
+      const pos = s + 1
+      ta.selectionStart = s !== e ? pos : pos
+      ta.selectionEnd = s !== e ? e + 1 : pos
+    })
+  }
+
+  const addOption = () => {
+    const opts = [...(node.options || [])]
+    if (opts.length >= 3) return
+    opts.push({ label: '', next_node_key: '' })
+    updateNode(node.id, { options: opts })
+  }
+  const removeOption = (idx) => {
+    const opts = (node.options || []).filter((_, i) => i !== idx)
+    updateNode(node.id, { options: opts })
+  }
+  const updateOption = (idx, field, value) => {
+    const opts = (node.options || []).map((o, i) => (i === idx ? { ...o, [field]: value } : o))
+    updateNode(node.id, { options: opts })
+  }
+
+  const keywordText = (node.keywords || []).join(', ')
+
+  // Validaciones inline (visual feedback)
+  const needsAiPrompt = node.type === 'open_question_ai' && !node.ai_system_prompt?.trim()
+  const needsActionType = node.type === 'action' && !node.action_type
+  const hasHiddenConfig = (
+    needsAiPrompt || needsActionType
+    || (node.type === 'open_question_detect' && (node.keywords?.length || 0) === 0)
+    || (node.type === 'options' && (node.options?.length || 0) === 0)
+  )
+
+  const routeLabel = node.type === 'action' ? 'Continuar a' : 'Siguiente paso'
+
+  // ── Render ───────────────────────────────────────────────────────────
+  return (
+    <div id={`fnl-card-${node.id}`} className={`fnl-card ${dirty ? 'dirty' : ''}`}>
+      {/* Header */}
+      <div className="fnl-card-header">
+        <div className="fnl-card-num">{index + 1}</div>
+        <input
+          className="fnl-card-title"
+          value={node.name}
+          placeholder="Nombre del paso"
+          onChange={(e) => updateNode(node.id, { name: e.target.value })}
+        />
+        <span className="fnl-card-key" title="Identificador interno (no editable)">
+          <Icon name="lock" size={10} />
+          {node.node_key}
+        </span>
+        <div className="fnl-card-badges">{badges}</div>
+        <div className="fnl-card-actions">
+          <button
+            type="button"
+            className="fnl-icon-btn"
+            title="Mover arriba"
+            disabled={index === 0}
+            onClick={onMoveUp}
+          >
+            <Icon name="arrow-up" />
+          </button>
+          <button
+            type="button"
+            className="fnl-icon-btn"
+            title="Mover abajo"
+            disabled={index === total - 1}
+            onClick={onMoveDown}
+          >
+            <Icon name="arrow-down" />
+          </button>
+          <IconConfirmButton onConfirm={onDelete} />
+        </div>
+      </div>
+
+      {/* Type selector */}
+      <div className="fnl-type-selector">
+        {NODE_TYPES.map((t) => (
+          <button
+            key={t.value}
+            type="button"
+            className={`fnl-type-pill ${node.type === t.value ? 'active' : ''}`}
+            onClick={() => setType(t.value)}
+            title={t.help}
+          >
+            <Icon name={t.icon} size={14} />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Sección 1: ENVÍO ── */}
+      {node.type !== 'action' ? (
+        <div className={`fnl-section ${openSend ? 'open' : ''}`}>
+          <button type="button" className="fnl-section-header" onClick={() => setOpenSend((v) => !v)}>
+            <div className="fnl-section-dot active" />
+            <span className="fnl-section-label">1. Mensaje que verá el cliente</span>
+            <span className="fnl-section-chevron">
+              <Icon name="chevron-down" size={14} />
+            </span>
+          </button>
+          {openSend ? (
+            <div className="fnl-section-body">
+              <div className="fnl-wa-toolbar">
+                <button type="button" title="Negrita *texto*" onClick={() => insertWA('*')}>
+                  <Icon name="bold" size={13} />
+                </button>
+                <button type="button" title="Cursiva _texto_" onClick={() => insertWA('_')}>
+                  <Icon name="italic" size={13} />
+                </button>
+                <button type="button" title="Tachado ~texto~" onClick={() => insertWA('~')}>
+                  <Icon name="strikethrough" size={13} />
+                </button>
+                <span className="fnl-wa-hint">Formato nativo de WhatsApp</span>
+              </div>
+              <textarea
+                ref={textareaRef}
+                className="fnl-textarea fnl-wa-textarea"
+                value={node.message_text}
+                placeholder="Escribí lo que verá el cliente. Usá _[nombre]_ y otras variables del lead."
+                rows={3}
+                onChange={(e) => updateNode(node.id, { message_text: e.target.value })}
+              />
             </div>
+          ) : null}
+        </div>
+      ) : null}
 
-            <div className="crm-detail">
-              {loadingSessionDetail ? (
-                <div className="card text-muted">Cargando detalle...</div>
-              ) : selectedSession ? (
-                <>
-                  <div className="card">
-                    <div className="card-header">
-                      <h2 className="card-title">{sessionLeadLabel(selectedSession)}</h2>
-                    </div>
-
-                    <div className="lead-summary-grid">
-                      <SessionMeta label="Nodo actual" value={selectedSession.current_node_name || selectedSession.current_node_key} />
-                      <SessionMeta label="Estado" value={SESSION_STATUS_LABELS[selectedSession.status] || selectedSession.status} />
-                      <SessionMeta label="Canal" value={selectedSession.channel || 'telegram'} />
-                      <SessionMeta label="Último update" value={selectedSession.updated_at ? formatDate(selectedSession.updated_at) : '—'} />
-                    </div>
-
-                    <div className="mt-4">
-                      <div className="text-sm font-semibold">Historial de nodos</div>
-                      <div className="timeline-list mt-4">
-                        {(selectedSession.history || []).length === 0 ? (
-                          <div className="text-muted">Sin historial.</div>
-                        ) : selectedSession.history.map((item, index) => (
-                          <div key={`${item.node_key}-${index}`} className="timeline-item">
-                            <div className="timeline-dot" />
-                            <div className="timeline-body">
-                              <div className="timeline-head">
-                                <span className="font-semibold">{item.name || item.node_key}</span>
-                                <span className="text-xs text-muted">
-                                  {item.entered_at ? timeAgo(item.entered_at) : '—'}
-                                </span>
-                              </div>
-                              <div className="text-sm text-secondary">
-                                {item.node_key} · {TYPE_LABELS[item.type] || item.type}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="card mt-4">
-                    <div className="card-header">
-                      <h2 className="card-title">Conversación</h2>
-                    </div>
-                    <div className="chat-messages funnel-session-messages">
-                      {(selectedSession.messages || []).map((message) => (
-                        <div
-                          key={message.id}
-                          className={`chat-bubble ${message.direction === 'outbound' ? 'outbound' : 'inbound'}`}
-                        >
-                          <div className="chat-bubble-content">{message.content || `[${message.content_type}]`}</div>
-                          <div className="chat-bubble-meta">
-                            {message.direction === 'outbound' ? 'Bot' : 'Lead'} · {timeAgo(message.created_at)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="card text-muted">Selecciona una sesión</div>
-              )}
-            </div>
+      {/* ── Sección 2: ESPERAR (informativa) ── */}
+      {node.type === 'message' || node.type === 'action' ? null : (
+        <div className="fnl-section">
+          <div className="fnl-section-header" style={{ cursor: 'default' }}>
+            <div className="fnl-section-dot" />
+            <span className="fnl-section-label">
+              2. Esperar respuesta del cliente — automático
+            </span>
           </div>
         </div>
       )}
+
+      {/* ── Sección 3: PROCESAR ── */}
+      {node.type === 'open_question_ai' || node.type === 'open_question_detect' || node.type === 'action' ? (
+        <div className={`fnl-section ${openProcess || hasHiddenConfig ? 'open' : ''}`}>
+          <button type="button" className="fnl-section-header" onClick={() => setOpenProcess((v) => !v)}>
+            <div className="fnl-section-dot process" />
+            <span className="fnl-section-label">
+              {node.type === 'open_question_ai'     ? '3. Procesar con IA' : null}
+              {node.type === 'open_question_detect' ? '3. Detectar palabras clave' : null}
+              {node.type === 'action'                ? 'Acción automática del sistema' : null}
+            </span>
+            <span className="fnl-section-chevron">
+              <Icon name="chevron-down" size={14} />
+            </span>
+          </button>
+          {(openProcess || hasHiddenConfig) ? (
+            <div className="fnl-section-body">
+              {node.type === 'open_question_ai' ? (
+                <div className="fnl-field">
+                  <div className="fnl-field-label">Instrucción secreta para la IA</div>
+                  <textarea
+                    className={`fnl-textarea ${needsAiPrompt ? 'warn' : ''}`}
+                    rows={3}
+                    placeholder='Ej: Extrae solo el primer nombre del mensaje. Si no hay uno claro, responde "desconocido".'
+                    value={node.ai_system_prompt}
+                    onChange={(e) => updateNode(node.id, { ai_system_prompt: e.target.value })}
+                  />
+                  <div className="fnl-field-hint">
+                    El cliente nunca ve esto. La IA (Groq) lo usa como system prompt para interpretar la respuesta.
+                  </div>
+                </div>
+              ) : null}
+
+              {node.type === 'open_question_detect' ? (
+                <div className="fnl-field">
+                  <div className="fnl-field-label">Palabras a detectar en la respuesta</div>
+                  <input
+                    type="text"
+                    className="fnl-input"
+                    value={keywordText}
+                    placeholder="sí, quiero, me interesa, dale, claro..."
+                    onChange={(e) => updateNode(node.id, { keywords: normalizeKeywords(e.target.value) })}
+                  />
+                  <div className="fnl-field-hint">
+                    Separadas por coma. El sistema ignora mayúsculas y acentos automáticamente.
+                  </div>
+                </div>
+              ) : null}
+
+              {node.type === 'action' ? (
+                <>
+                  <div className="fnl-field">
+                    <div className="fnl-field-label">¿Qué hace el sistema en este paso?</div>
+                    <select
+                      className={`fnl-select ${needsActionType ? 'warn' : ''}`}
+                      value={node.action_type || ''}
+                      onChange={(e) => updateNode(node.id, { action_type: e.target.value })}
+                    >
+                      <option value="">Elegir acción...</option>
+                      {ACTION_TYPES.map((a) => (
+                        <option key={a.value} value={a.value}>{a.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {node.action_type ? (
+                    <div className="fnl-action-panel">
+                      {(() => {
+                        const meta = ACTION_TYPES.find((a) => a.value === node.action_type)
+                        if (!meta) return null
+                        return (
+                          <>
+                            <div className={`fnl-action-panel-title ${meta.value === 'escalate' ? 'danger' : ''}`}>
+                              <Icon name={meta.icon} size={12} />
+                              Cómo funciona
+                            </div>
+                            <div className="fnl-field-hint" style={{ fontSize: 'var(--font-size-xs)' }}>
+                              {meta.help}
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ── Sección 4: ENRUTAR ── */}
+      <div className={`fnl-section ${openRoute ? 'open' : ''}`}>
+        <button type="button" className="fnl-section-header" onClick={() => setOpenRoute((v) => !v)}>
+          <div className="fnl-section-dot route" />
+          <span className="fnl-section-label">
+            {node.type === 'open_question_detect' ? '4. Enrutar según detección' : null}
+            {node.type === 'options'               ? 'Botones de respuesta rápida' : null}
+            {(node.type !== 'open_question_detect' && node.type !== 'options') ? `4. ${routeLabel}` : null}
+          </span>
+          <span className="fnl-section-chevron">
+            <Icon name="chevron-down" size={14} />
+          </span>
+        </button>
+        {openRoute ? (
+          <div className="fnl-section-body">
+            {node.type === 'open_question_detect' ? (
+              <div className="fnl-split-grid">
+                <div>
+                  <div className="fnl-split-label ok">
+                    <Icon name="check" size={11} />
+                    Si detecta las palabras
+                  </div>
+                  <NodeKeySelect
+                    nodes={nodes}
+                    excludeKey={node.node_key}
+                    value={node.keyword_match_next}
+                    onChange={(v) => updateNode(node.id, { keyword_match_next: v })}
+                    className="ok"
+                  />
+                </div>
+                <div>
+                  <div className="fnl-split-label danger">
+                    <Icon name="x" size={11} />
+                    Si NO las detecta
+                  </div>
+                  <NodeKeySelect
+                    nodes={nodes}
+                    excludeKey={node.node_key}
+                    value={node.keyword_nomatch_next}
+                    onChange={(v) => updateNode(node.id, { keyword_nomatch_next: v })}
+                    className="danger"
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            {node.type === 'options' ? (
+              <>
+                {(node.options || []).map((btn, idx) => {
+                  const len = (btn.label || '').length
+                  const warn = len >= 17
+                  const over = len > 20
+                  return (
+                    <div key={`btn-${idx}`} className="fnl-btn-row">
+                      <input
+                        type="text"
+                        value={btn.label || ''}
+                        maxLength={24}
+                        placeholder="Texto del botón..."
+                        onChange={(e) => updateOption(idx, 'label', e.target.value)}
+                      />
+                      <div className={`fnl-btn-count ${over ? 'over' : warn ? 'warn' : ''}`}>
+                        {len}/20
+                      </div>
+                      <div className="fnl-btn-row-divider" />
+                      <select
+                        value={btn.next_node_key || ''}
+                        onChange={(e) => updateOption(idx, 'next_node_key', e.target.value)}
+                      >
+                        <option value="">Ir a...</option>
+                        {nodes.filter((x) => x.node_key !== node.node_key).map((x) => (
+                          <option key={x.id} value={x.node_key}>{x.name || x.node_key}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="fnl-btn-del"
+                        onClick={() => removeOption(idx)}
+                        title="Quitar botón"
+                      >
+                        <Icon name="x" size={12} />
+                      </button>
+                    </div>
+                  )
+                })}
+                <button
+                  type="button"
+                  className="fnl-add-inline"
+                  disabled={(node.options || []).length >= 3}
+                  onClick={addOption}
+                >
+                  <Icon name="plus" size={13} />
+                  {(node.options || []).length >= 3 ? 'Máximo 3 botones' : 'Agregar botón'}
+                </button>
+                <div className="fnl-field-hint" style={{ marginTop: 'var(--space-2)' }}>
+                  WhatsApp permite hasta 3 botones de respuesta rápida, 20 caracteres cada uno.
+                </div>
+              </>
+            ) : null}
+
+            {(node.type !== 'open_question_detect' && node.type !== 'options') ? (
+              <div className="fnl-field" style={{ marginBottom: 0 }}>
+                <NodeKeySelect
+                  nodes={nodes}
+                  excludeKey={node.node_key}
+                  value={node.next_node_key}
+                  onChange={(v) => updateNode(node.id, { next_node_key: v })}
+                />
+                {node.type === 'action' && node.action_type === 'escalate' ? (
+                  <div className="fnl-field-hint">
+                    La acción <code className="fnl-inline-code">escalate</code> detiene el bot. El siguiente paso se ignora.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+// ── Select de node_key con placeholder ────────────────────────────────────
+function NodeKeySelect({ nodes, excludeKey, value, onChange, className = '' }) {
+  return (
+    <select
+      className={`fnl-select ${className}`}
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">Sin siguiente paso</option>
+      {nodes
+        .filter((n) => n.node_key !== excludeKey)
+        .map((n) => (
+          <option key={n.id} value={n.node_key}>
+            {n.name || 'Sin nombre'} · {n.node_key}
+          </option>
+        ))}
+    </select>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//   SESSIONS VIEW (sin cambios respecto a la versión previa)
+// ══════════════════════════════════════════════════════════════════════════
+function SessionsView({
+  sessionSearch,
+  setSessionSearch,
+  loadingSessions,
+  filteredSessions,
+  selectedSessionId,
+  setSelectedSessionId,
+  loadingSessionDetail,
+  selectedSession,
+}) {
+  return (
+    <div className="mt-4">
+      <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
+        <input
+          className="input"
+          style={{ maxWidth: 280 }}
+          placeholder="Buscar lead, teléfono o nodo..."
+          value={sessionSearch}
+          onChange={(event) => setSessionSearch(event.target.value)}
+        />
+      </div>
+
+      <div className="crm-layout mt-4">
+        <div className="card">
+          <div className="card-header">
+            <h2 className="card-title">Sesiones activas</h2>
+          </div>
+          {loadingSessions ? (
+            <p className="text-muted">Cargando sesiones...</p>
+          ) : filteredSessions.length === 0 ? (
+            <p className="text-muted">No hay sesiones activas o escaladas.</p>
+          ) : (
+            <div className="table-container">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Lead</th>
+                    <th>Nodo actual</th>
+                    <th>Tiempo</th>
+                    <th>Estado</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredSessions.map((session) => (
+                    <tr
+                      key={session.id}
+                      className={selectedSessionId === session.id ? 'table-row-selected' : ''}
+                      onClick={() => setSelectedSessionId(session.id)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <td>
+                        <div className="font-semibold">{sessionLeadLabel(session)}</div>
+                        <div className="text-xs text-muted">{session.lead_phone || session.channel}</div>
+                      </td>
+                      <td>
+                        <div className="font-semibold">{session.current_node_name || session.current_node_key}</div>
+                        <div className="text-xs text-muted">{session.current_node_key}</div>
+                      </td>
+                      <td>{session.current_node_entered_at ? timeAgo(session.current_node_entered_at) : '—'}</td>
+                      <td>
+                        <span className={badgeClassForSession(session.status)}>
+                          {SESSION_STATUS_LABELS[session.status] || session.status}
+                        </span>
+                      </td>
+                      <td>
+                        <Link className="btn btn-ghost btn-sm" to={`/conversations?conversationId=${session.conversation_id}`}>
+                          Ver conversación
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="crm-detail">
+          {loadingSessionDetail ? (
+            <div className="card text-muted">Cargando detalle...</div>
+          ) : selectedSession ? (
+            <>
+              <div className="card">
+                <div className="card-header">
+                  <h2 className="card-title">{sessionLeadLabel(selectedSession)}</h2>
+                </div>
+
+                <div className="lead-summary-grid">
+                  <SessionMeta label="Nodo actual" value={selectedSession.current_node_name || selectedSession.current_node_key} />
+                  <SessionMeta label="Estado" value={SESSION_STATUS_LABELS[selectedSession.status] || selectedSession.status} />
+                  <SessionMeta label="Canal" value={selectedSession.channel || 'telegram'} />
+                  <SessionMeta label="Último update" value={selectedSession.updated_at ? formatDate(selectedSession.updated_at) : '—'} />
+                </div>
+
+                <div className="mt-4">
+                  <div className="text-sm font-semibold">Historial de nodos</div>
+                  <div className="timeline-list mt-4">
+                    {(selectedSession.history || []).length === 0 ? (
+                      <div className="text-muted">Sin historial.</div>
+                    ) : selectedSession.history.map((item, index) => (
+                      <div key={`${item.node_key}-${index}`} className="timeline-item">
+                        <div className="timeline-dot" />
+                        <div className="timeline-body">
+                          <div className="timeline-head">
+                            <span className="font-semibold">{item.name || item.node_key}</span>
+                            <span className="text-xs text-muted">
+                              {item.entered_at ? timeAgo(item.entered_at) : '—'}
+                            </span>
+                          </div>
+                          <div className="text-sm text-secondary">
+                            {item.node_key} · {TYPE_LABEL[item.type] || item.type}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="card mt-4">
+                <div className="card-header">
+                  <h2 className="card-title">Conversación</h2>
+                </div>
+                <div className="chat-messages funnel-session-messages">
+                  {(selectedSession.messages || []).map((message) => (
+                    <div
+                      key={message.id}
+                      className={`chat-bubble ${message.direction === 'outbound' ? 'outbound' : 'inbound'}`}
+                    >
+                      <div className="chat-bubble-content">{message.content || `[${message.content_type}]`}</div>
+                      <div className="chat-bubble-meta">
+                        {message.direction === 'outbound' ? 'Bot' : 'Lead'} · {timeAgo(message.created_at)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="card text-muted">Selecciona una sesión</div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

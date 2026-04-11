@@ -9,6 +9,10 @@ const {
   updatePaymentQrAsset,
   getPaymentQrAsset,
 } = require('../services/paymentOptions');
+const {
+  getLlmSettings,
+  updateLlmSettings,
+} = require('../services/llmSettings');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -30,6 +34,16 @@ router.get('/payment-options', authMiddleware, tenantMiddleware, async (req, res
   }
 });
 
+router.get('/llm', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const settings = await getLlmSettings(req.tenantId);
+    res.json(settings);
+  } catch (err) {
+    console.error('[settings/llm GET]', err);
+    res.status(500).json({ error: 'Error cargando configuración de IA' });
+  }
+});
+
 router.put('/payment-options', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
   try {
     await updatePaymentSettings(req.tenantId, req.body || {});
@@ -39,6 +53,18 @@ router.put('/payment-options', authMiddleware, tenantMiddleware, requireManager,
   } catch (err) {
     console.error('[settings/payment-options PUT]', err);
     res.status(500).json({ error: 'Error guardando configuración de pago' });
+  }
+});
+
+router.put('/llm', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
+  try {
+    await updateLlmSettings(req.tenantId, req.body || {});
+    invalidateTenantCache(req.tenantId);
+    const updated = await getLlmSettings(req.tenantId);
+    res.json(updated);
+  } catch (err) {
+    console.error('[settings/llm PUT]', err);
+    res.status(500).json({ error: 'Error guardando configuración de IA' });
   }
 });
 

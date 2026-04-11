@@ -25,6 +25,23 @@ function buildWorkshopContext(workshop) {
   return parts.join('\n');
 }
 
+function buildRecentHistoryBlock(recentMessages = []) {
+  const normalized = Array.isArray(recentMessages)
+    ? recentMessages
+        .map((msg) => ({
+          role: msg.direction === 'outbound' ? 'Bot' : 'Lead',
+          content: String(msg.content || '').trim(),
+        }))
+        .filter((msg) => msg.content)
+    : [];
+
+  if (!normalized.length) {
+    return '';
+  }
+
+  return `Historial reciente:\n${normalized.map((msg) => `${msg.role}: ${msg.content}`).join('\n')}`;
+}
+
 async function runGroqChat({
   systemPrompt,
   userPrompt,
@@ -80,9 +97,7 @@ async function generateInterestedReply({ lead, workshop, messageText, recentMess
     buildWorkshopContext(workshop),
   ].join('\n');
 
-  const historyBlock = recentMessages.length
-    ? `Historial reciente:\n${recentMessages.map((msg) => `${msg.direction === 'outbound' ? 'Bot' : 'Lead'}: ${msg.content}`).join('\n')}\n\n`
-    : '';
+  const historyBlock = buildRecentHistoryBlock(recentMessages);
 
   const userPrompt = [
     `Lead: ${lead.name || 'Sin nombre'} (${lead.phone})`,
@@ -90,7 +105,7 @@ async function generateInterestedReply({ lead, workshop, messageText, recentMess
     `Mensaje actual del lead: ${messageText}`,
     '',
     'Responde de forma útil y breve. Si falta un dato real, dilo con honestidad y ofrece pasar con Daniel.',
-  ].join('\n');
+  ].filter(Boolean).join('\n\n');
 
   return runGroqChat({
     systemPrompt,
@@ -141,6 +156,7 @@ module.exports = {
   GROQ_MODEL,
   hasGroqKey,
   runGroqChat,
+  buildRecentHistoryBlock,
   generateInterestedReply,
   analyzeMessageForTags,
 };

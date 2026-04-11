@@ -1,6 +1,6 @@
 const { query } = require('../../db');
 const { broadcast } = require('../adminEvents');
-const { runGroqChat } = require('./llm');
+const { runGroqChat, buildRecentHistoryBlock } = require('./llm');
 const { analyzeAndTagInboundMessage } = require('../analysis/tagger');
 const { recalculateLeadScore } = require('../analysis/scorer');
 const { buildPaymentQrResponse, maybeProcessPaymentProof, runPaymentProofDiagnostic } = require('./paymentWorkflow');
@@ -152,11 +152,30 @@ async function getConversationById(tenantId, conversationId) {
   return rows[0] || null;
 }
 
+async function getRecentLeadMessages(tenantId, leadId, limit = 4) {
+  if (!leadId) return [];
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 4, 10));
+  const rows = await query(
+    `SELECT m.direction, m.content, m.created_at
+     FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id
+     WHERE c.tenant_id = ?
+       AND c.lead_id = ?
+       AND m.content IS NOT NULL
+       AND m.content <> ''
+     ORDER BY m.id DESC
+     LIMIT ?`,
+    [tenantId, leadId, safeLimit + 1]
+  );
+
+  return rows.reverse();
+}
+
 async function getTenantById(tenantId) {
   const rows = await query('SELECT * FROM tenants WHERE id = ? LIMIT 1', [tenantId]);
   const tenant = rows[0] || null;
   if (!tenant) return null;
-  for (const field of ['push_config', 'payment_options']) {
+  for (const field of ['llm_config', 'push_config', 'payment_options']) {
     tenant[field] = parseJson(tenant[field], {});
   }
   return tenant;
@@ -1340,9 +1359,37 @@ async function runFlowEngine({
         await applyLeadQualifyingUpdate({ tenantId: tenant_id, leadId: lead.id, messageText: message_text });
       }
 
+      const [tenant, workshop, rawRecentMessages] = await Promise.all([
+        getTenantById(tenant_id),
+        getLatestWorkshop(tenant_id),
+        getRecentLeadMessages(tenant_id, lead?.id, 4),
+      ]);
+      const normalizedCurrentMessage = normalizeInternalWhitespace(message_text);
+      let recentMessages = rawRecentMessages;
+      if (
+        normalizedCurrentMessage
+        && recentMessages.length > 0
+        && recentMessages[recentMessages.length - 1]?.direction === 'inbound'
+        && normalizeInternalWhitespace(recentMessages[recentMessages.length - 1]?.content) === normalizedCurrentMessage
+      ) {
+        recentMessages = recentMessages.slice(0, -1);
+      }
+      recentMessages = recentMessages.slice(-4);
+
       const aiReply = await runGroqChat({
-        systemPrompt: buildAiSystemPrompt(currentNode, context),
-        userPrompt: normalizeText(message_text),
+        systemPrompt: buildAiSystemPrompt({
+          node: currentNode,
+          context,
+          tenant,
+          workshop,
+          lead,
+          conversation,
+        }),
+        userPrompt: buildAiUserPrompt({
+          lead,
+          messageText: message_text,
+          recentMessages,
+        }),
         temperature: 0.4,
         maxTokens: 180,
       }).catch((err) => {
@@ -1627,6 +1674,10 @@ function buildPlaceholderMap(context = {}, workshop = null, lead = null, convers
     HORA_INICIO: workshop ? formatBoliviaTime(workshop.time_start) : 'hora por confirmar',
     HORA_FIN: workshop ? formatBoliviaTime(workshop.time_end) : 'hora por confirmar',
     TALLER: workshop?.name || '',
+    PRECIO: formatMoneyBs(workshop?.price),
+    PRECIO_NORMAL: formatMoneyBs(workshop?.price),
+    PRECIO_EARLY_BIRD: formatMoneyBs(workshop?.early_bird_price),
+    PRECIO_GRUPAL: formatMoneyBs(workshop?.group_price),
     NOMBRE: canonicalFirstName,
     NOMBRES: identity.first_name || '',
     APELLIDOS: identity.last_name || '',
@@ -1653,12 +1704,45 @@ function resolveMessageText(messageText, context, workshop, lead = null, convers
   return formatMessageWithWorkshop(messageText, workshop, context, lead, conversation);
 }
 
-function buildAiSystemPrompt(node, context) {
-  let systemPrompt = node.ai_system_prompt || 'Responde con empatía y brevedad en español.';
-  if (context.groq_context) {
-    systemPrompt += `\n\nContexto adicional sobre este contacto: ${context.groq_context}`;
+function buildAiSystemPrompt({ node, context, tenant, workshop, lead, conversation }) {
+  const sections = [];
+  const globalContext = resolveMessageText(
+    tenant?.llm_config?.global_open_question_context || '',
+    context,
+    workshop,
+    lead,
+    conversation
+  ).trim();
+
+  if (globalContext) {
+    sections.push(globalContext);
   }
-  return systemPrompt;
+
+  if (context.groq_context) {
+    sections.push(`Contexto adicional sobre este contacto:\n${context.groq_context}`);
+  }
+
+  const nodePrompt = resolveMessageText(
+    node.ai_system_prompt || '',
+    context,
+    workshop,
+    lead,
+    conversation
+  ).trim();
+
+  sections.push(nodePrompt || 'Responde con empatía y brevedad en español.');
+  return sections.join('\n\n');
+}
+
+function buildAiUserPrompt({ lead, messageText, recentMessages = [] }) {
+  const historyBlock = buildRecentHistoryBlock(recentMessages);
+  return [
+    `Lead: ${lead?.name || 'Sin nombre'} (${lead?.phone || 'Sin teléfono'})`,
+    historyBlock,
+    `Mensaje actual del lead: ${normalizeText(messageText)}`,
+    '',
+    'Responde al mensaje actual siguiendo el contexto global y la instrucción específica de este nodo.',
+  ].filter(Boolean).join('\n\n');
 }
 
 function shouldBufferIncomingText(incoming) {

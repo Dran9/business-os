@@ -11,6 +11,7 @@ const Contacts      = lazy(() => import('./pages/Contacts'))
 const Conversations = lazy(() => import('./pages/Conversations'))
 const Funnel        = lazy(() => import('./pages/Funnel'))
 const Leads         = lazy(() => import('./pages/Leads'))
+const Commands      = lazy(() => import('./pages/Commands'))
 const Workshops     = lazy(() => import('./pages/Workshops'))
 const Finance       = lazy(() => import('./pages/Finance'))
 const Marketing     = lazy(() => import('./pages/Marketing'))
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="conversations" element={<Conversations />} />
             <Route path="funnel" element={<Funnel />} />
             <Route path="leads" element={<Leads />} />
+            <Route path="commands" element={<Commands />} />
             <Route path="workshops" element={<Workshops />} />
             <Route path="finance" element={<Finance />} />
             <Route path="marketing" element={<Marketing />} />

@@ -1745,6 +1745,202 @@ body {
   min-width: 0;
 }
 
+.commands-shell {
+  display: flex;
+  flex-direction: column;
+}
+
+.commands-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.commands-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.commands-main,
+.commands-side {
+  min-width: 0;
+}
+
+.commands-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.commands-search-input-wrap {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.commands-search-input-wrap svg {
+  color: var(--color-text-muted);
+}
+
+.commands-search-input {
+  border: 0;
+  padding-left: 0;
+  padding-right: 0;
+  box-shadow: none !important;
+}
+
+.commands-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.commands-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-hover);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), transform var(--transition-fast), background var(--transition-fast);
+}
+
+.commands-result-row:hover {
+  border-color: var(--color-primary);
+  background: var(--color-accent-light);
+  transform: translateY(-1px);
+}
+
+.commands-chip-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.commands-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.commands-context-card {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+}
+
+.commands-context-title {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.commands-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.commands-action-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 112px;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.commands-action-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-primary);
+  color: var(--color-text);
+}
+
+.commands-action-card span {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
+.commands-action-card.primary.active,
+.commands-action-card.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+
+.commands-action-card.danger:hover {
+  border-color: var(--color-danger);
+}
+
+.commands-action-card.danger.active {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-text-inverse);
+}
+
+.commands-action-panel {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.commands-action-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+}
+
+.commands-settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.commands-settings-body {
+  margin-top: var(--space-4);
+}
+
+.commands-empty {
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
 .lead-summary-grid,
 .ocr-grid {
   display: grid;
@@ -1934,12 +2130,16 @@ body {
   }
 
   .crm-layout,
+  .commands-layout,
   .funnel-builder-layout,
   .lead-mini-lists,
   .agenda-grid,
   .marketing-grid,
   .tag-form,
   .agenda-search-row,
+  .commands-search-row,
+  .commands-context-grid,
+  .commands-actions-grid,
   .funnel-form-grid,
   .funnel-detect-grid,
   .funnel-option-row,

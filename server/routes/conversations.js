@@ -6,7 +6,13 @@ const TelegramAdapter = require('../services/channels/telegram');
 const WhatsAppAdapter = require('../services/channels/whatsapp');
 const { broadcast } = require('../services/adminEvents');
 const { getMessageTarget } = require('../services/whatsappIdentity');
-const { resumeConversationBot } = require('../services/chatbot/flowEngine');
+const {
+  formatMessageWithWorkshop,
+  resumeConversationBot,
+  stopConversationBot,
+} = require('../services/chatbot/flowEngine');
+const { getEnrollmentWithRelations } = require('../services/enrollments');
+const { getLlmSettings } = require('../services/llmSettings');
 
 const router = express.Router();
 const VALID_INBOX_STATES = new Set(['open', 'pending', 'resolved']);
@@ -58,6 +64,149 @@ async function getConversationById(tenantId, id) {
     [id, tenantId]
   );
   return rows[0] || null;
+}
+
+async function getLeadById(tenantId, id) {
+  const rows = await query(
+    'SELECT * FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1',
+    [id, tenantId]
+  );
+  return rows[0] || null;
+}
+
+async function getWorkshopById(tenantId, workshopId) {
+  if (!workshopId) return null;
+  const rows = await query(
+    `SELECT w.*, v.name AS venue_name, v.address AS venue_address
+     FROM workshops w
+     LEFT JOIN venues v ON v.id = w.venue_id
+     WHERE w.id = ? AND w.tenant_id = ?
+     LIMIT 1`,
+    [workshopId, tenantId]
+  );
+  return rows[0] || null;
+}
+
+async function getLatestFlowContext(tenantId, conversationId) {
+  const rows = await query(
+    `SELECT context
+     FROM flow_sessions
+     WHERE tenant_id = ? AND conversation_id = ?
+     ORDER BY id DESC
+     LIMIT 1`,
+    [tenantId, conversationId]
+  );
+  return parseJson(rows[0]?.context) || {};
+}
+
+async function resolvePracticalInfoWorkshop(tenantId, conversation, leadId, enrollmentId = null) {
+  if (enrollmentId) {
+    const enrollment = await getEnrollmentWithRelations(tenantId, Number(enrollmentId));
+    if (!enrollment) {
+      throw new Error('Inscripción no encontrada');
+    }
+    const workshop = await getWorkshopById(tenantId, enrollment.workshop_id);
+    return { workshop, enrollment };
+  }
+
+  if (conversation?.workshop_id) {
+    const workshop = await getWorkshopById(tenantId, conversation.workshop_id);
+    if (workshop) return { workshop, enrollment: null };
+  }
+
+  const latestEnrollment = await query(
+    `SELECT id, workshop_id
+     FROM enrollments
+     WHERE tenant_id = ? AND lead_id = ?
+     ORDER BY
+       CASE WHEN payment_status = 'unpaid' THEN 0 ELSE 1 END,
+       COALESCE(payment_requested_at, enrolled_at) DESC,
+       id DESC
+     LIMIT 1`,
+    [tenantId, leadId]
+  );
+
+  if (latestEnrollment[0]?.workshop_id) {
+    const workshop = await getWorkshopById(tenantId, latestEnrollment[0].workshop_id);
+    if (workshop) {
+      return {
+        workshop,
+        enrollment: latestEnrollment[0],
+      };
+    }
+  }
+
+  const fallback = await query(
+    `SELECT id
+     FROM workshops
+     WHERE tenant_id = ?
+       AND status IN ('planned', 'open', 'draft', 'full', 'completed')
+     ORDER BY
+       CASE
+         WHEN date IS NULL THEN 2
+         WHEN date >= CURDATE() THEN 0
+         ELSE 1
+       END,
+       CASE WHEN date >= CURDATE() THEN date END ASC,
+       CASE WHEN date < CURDATE() THEN date END DESC,
+       id DESC
+     LIMIT 1`,
+    [tenantId]
+  );
+
+  if (fallback[0]?.id) {
+    const workshop = await getWorkshopById(tenantId, fallback[0].id);
+    if (workshop) return { workshop, enrollment: null };
+  }
+
+  return { workshop: null, enrollment: null };
+}
+
+async function sendConversationText({
+  tenantId,
+  conversation,
+  content,
+  sender,
+}) {
+  const adapter = await getChannelAdapter(conversation.channel, tenantId);
+  let target = conversation.lead_phone;
+
+  if (conversation.channel === 'whatsapp') {
+    target = await getMessageTarget(tenantId, conversation.lead_id);
+    if (!target?.phone && !target?.bsuid) {
+      throw new Error('No hay target de WhatsApp disponible para esta conversación');
+    }
+  }
+
+  const sent = await adapter.sendText(target, escapeHtml(content));
+  const outboundBsuid = target && typeof target === 'object' ? target.bsuid || null : null;
+
+  const result = await query(
+    `INSERT INTO messages (conversation_id, direction, sender, bsuid, content, wa_message_id, content_type, created_at)
+     VALUES (?, 'outbound', ?, ?, ?, ?, 'text', NOW())`,
+    [conversation.id, sender, outboundBsuid, content, sent.messageId || '']
+  );
+
+  await query(
+    `UPDATE conversations
+     SET last_message_at = NOW(),
+         bsuid = COALESCE(?, bsuid),
+         inbox_state = 'pending',
+         assigned_to = CASE
+           WHEN assigned_to IS NULL OR assigned_to = '' OR assigned_to = 'bot' THEN ?
+           ELSE assigned_to
+         END
+     WHERE id = ? AND tenant_id = ?`,
+    [outboundBsuid, sender, conversation.id, tenantId]
+  );
+
+  broadcast('message:change', { conversationId: conversation.id, messageId: result.insertId, reason: 'manual-send' }, tenantId);
+  broadcast('conversation:change', { id: conversation.id, reason: 'manual-send' }, tenantId);
+
+  return {
+    messageId: result.insertId,
+    sent,
+  };
 }
 
 async function attachTags(tenantId, items) {
@@ -257,48 +406,48 @@ router.post('/:id/messages', authMiddleware, tenantMiddleware, async (req, res) 
       return res.status(404).json({ error: 'Conversación no encontrada' });
     }
 
-    const adapter = await getChannelAdapter(conversation.channel, req.tenantId);
-    let target = conversation.lead_phone;
-
-    if (conversation.channel === 'whatsapp') {
-      target = await getMessageTarget(req.tenantId, conversation.lead_id);
-      if (!target?.phone && !target?.bsuid) {
-        return res.status(400).json({ error: 'No hay target de WhatsApp disponible para esta conversación' });
-      }
-    }
-
-    const sent = await adapter.sendText(target, escapeHtml(content));
-    const outboundBsuid = target && typeof target === 'object' ? target.bsuid || null : null;
-
-    const result = await query(
-      `INSERT INTO messages (conversation_id, direction, sender, bsuid, content, wa_message_id, content_type, created_at)
-       VALUES (?, 'outbound', ?, ?, ?, ?, 'text', NOW())`,
-      [conversation.id, req.user?.username || 'admin', outboundBsuid, content, sent.messageId || '']
-    );
-
-    await query(
-      `UPDATE conversations
-       SET last_message_at = NOW(),
-           bsuid = COALESCE(?, bsuid),
-           inbox_state = 'pending',
-           assigned_to = CASE
-             WHEN assigned_to IS NULL OR assigned_to = '' OR assigned_to = 'bot' THEN ?
-             ELSE assigned_to
-           END
-       WHERE id = ? AND tenant_id = ?`,
-      [outboundBsuid, req.user?.username || 'admin', conversation.id, req.tenantId]
-    );
-
-    broadcast('message:change', { conversationId: conversation.id, messageId: result.insertId, reason: 'manual-send' }, req.tenantId);
-    broadcast('conversation:change', { id: conversation.id, reason: 'manual-send' }, req.tenantId);
+    const result = await sendConversationText({
+      tenantId: req.tenantId,
+      conversation,
+      content,
+      sender: req.user?.username || 'admin',
+    });
 
     res.json({
-      id: result.insertId,
+      id: result.messageId,
       message: 'Mensaje enviado',
     });
   } catch (err) {
     console.error('[conversations send message]', err);
     res.status(500).json({ error: err.message || 'Error enviando mensaje' });
+  }
+});
+
+router.post('/:id/stop-bot', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    if (!['owner', 'admin'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'No tienes permiso para detener el bot' });
+    }
+
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    const result = await stopConversationBot({
+      tenantId: req.tenantId,
+      conversationId: conversation.id,
+      actor: req.user?.username || 'admin',
+      reason: String(req.body?.reason || 'Bot detenido manualmente desde Comandos').trim(),
+    });
+
+    res.json({
+      message: 'Bot detenido',
+      ...result,
+    });
+  } catch (err) {
+    console.error('[conversations stop-bot]', err);
+    res.status(500).json({ error: err.message || 'Error deteniendo el bot' });
   }
 });
 
@@ -327,6 +476,59 @@ router.post('/:id/resume-bot', authMiddleware, tenantMiddleware, async (req, res
   } catch (err) {
     console.error('[conversations resume-bot]', err);
     res.status(500).json({ error: err.message || 'Error reanudando el bot' });
+  }
+});
+
+router.post('/:id/send-practical-info', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    if (!['owner', 'admin'].includes(req.user?.role)) {
+      return res.status(403).json({ error: 'No tienes permiso para enviar datos prácticos' });
+    }
+
+    const conversation = await getConversationById(req.tenantId, req.params.id);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversación no encontrada' });
+    }
+
+    const lead = await getLeadById(req.tenantId, conversation.lead_id);
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead no encontrado' });
+    }
+
+    const llmSettings = await getLlmSettings(req.tenantId);
+    const template = String(req.body?.template || llmSettings.practical_info_template || '').trim();
+    if (!template) {
+      return res.status(400).json({ error: 'No hay template de datos prácticos configurado' });
+    }
+
+    const { workshop } = await resolvePracticalInfoWorkshop(
+      req.tenantId,
+      conversation,
+      lead.id,
+      req.body?.enrollment_id || null
+    );
+    const context = await getLatestFlowContext(req.tenantId, conversation.id);
+    const rendered = formatMessageWithWorkshop(template, workshop, context, lead, conversation).trim();
+    if (!rendered) {
+      return res.status(400).json({ error: 'El mensaje generado quedó vacío' });
+    }
+
+    const result = await sendConversationText({
+      tenantId: req.tenantId,
+      conversation,
+      content: rendered,
+      sender: req.user?.username || 'admin',
+    });
+
+    res.json({
+      message: 'Datos prácticos enviados',
+      rendered_text: rendered,
+      workshop_name: workshop?.name || null,
+      message_id: result.messageId,
+    });
+  } catch (err) {
+    console.error('[conversations send-practical-info]', err);
+    res.status(500).json({ error: err.message || 'Error enviando datos prácticos' });
   }
 });
 

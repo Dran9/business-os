@@ -10,15 +10,19 @@ const { sendPushinatorNotification } = require('../pushinator');
 const { classifyName } = require('../nameClassifier');
 const { findByPhone } = require('../agendaBridge');
 const { resolveIdentity, getMessageTarget } = require('../whatsappIdentity');
+const {
+  DEFAULT_TEXT_BUFFER_IDLE_MS,
+  DEFAULT_TEXT_BUFFER_MAX_MESSAGES,
+  DEFAULT_TEXT_BUFFER_MAX_WINDOW_MS,
+  getLlmSettings,
+  normalizeTextBufferSettings,
+} = require('../llmSettings');
 const TelegramAdapter = require('../channels/telegram');
 const WhatsAppAdapter = require('../channels/whatsapp');
 
 const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options', 'capture_data']);
 const TELEGRAM_BUTTON_PREFIX = 'option:';
 const CONSTELLATION_DEFAULT_LIMIT = 7;
-const TEXT_BUFFER_IDLE_MS = 4000;
-const TEXT_BUFFER_MAX_MESSAGES = 5;
-const TEXT_BUFFER_MAX_WINDOW_MS = 12000;
 const TEXT_BUFFER_SEPARATOR = '\n';
 const TEXT_BUFFER_BY_CONVERSATION = new Map();
 
@@ -1749,6 +1753,14 @@ function shouldBufferIncomingText(incoming) {
   return incoming?.contentType === 'text' && Boolean(normalizeText(incoming.text));
 }
 
+function getDefaultTextBufferSettings() {
+  return {
+    text_buffer_idle_ms: DEFAULT_TEXT_BUFFER_IDLE_MS,
+    text_buffer_max_messages: DEFAULT_TEXT_BUFFER_MAX_MESSAGES,
+    text_buffer_max_window_ms: DEFAULT_TEXT_BUFFER_MAX_WINDOW_MS,
+  };
+}
+
 function getTextBufferKey(tenantId, conversationId) {
   return `${tenantId}:${conversationId}`;
 }
@@ -1764,11 +1776,12 @@ function scheduleBufferedTextFlush(key) {
   const existing = TEXT_BUFFER_BY_CONVERSATION.get(key);
   if (!existing) return;
   if (existing.timer) clearTimeout(existing.timer);
+  const idleMs = existing.settings?.text_buffer_idle_ms || DEFAULT_TEXT_BUFFER_IDLE_MS;
   existing.timer = setTimeout(() => {
     flushBufferedText(key).catch((err) => {
       console.error('[FlowEngine] Text buffer flush failed:', err.stack || err.message || err);
     });
-  }, TEXT_BUFFER_IDLE_MS);
+  }, idleMs);
   existing.timer.unref?.();
 }
 
@@ -1887,9 +1900,12 @@ async function flushBufferedText(key, { force = false } = {}) {
   const now = Date.now();
   const idleMs = now - entry.lastAt;
   const ageMs = now - entry.firstAt;
-  const reachedLimit = entry.messages.length >= TEXT_BUFFER_MAX_MESSAGES || ageMs >= TEXT_BUFFER_MAX_WINDOW_MS;
+  const bufferIdleMs = entry.settings?.text_buffer_idle_ms || DEFAULT_TEXT_BUFFER_IDLE_MS;
+  const maxMessages = entry.settings?.text_buffer_max_messages || DEFAULT_TEXT_BUFFER_MAX_MESSAGES;
+  const maxWindowMs = entry.settings?.text_buffer_max_window_ms || DEFAULT_TEXT_BUFFER_MAX_WINDOW_MS;
+  const reachedLimit = entry.messages.length >= maxMessages || ageMs >= maxWindowMs;
 
-  if (!force && !reachedLimit && idleMs < TEXT_BUFFER_IDLE_MS) {
+  if (!force && !reachedLimit && idleMs < bufferIdleMs) {
     scheduleBufferedTextFlush(key);
     return null;
   }
@@ -1933,16 +1949,19 @@ async function bufferIncomingText({
   incoming,
   channelAdapter,
   inboundMessageId,
+  settings = null,
 }) {
   const key = getTextBufferKey(tenantId, conversation.id);
   const now = Date.now();
   const text = normalizeText(incoming.text);
   const existing = TEXT_BUFFER_BY_CONVERSATION.get(key);
+  const nextSettings = normalizeTextBufferSettings(settings || getDefaultTextBufferSettings());
 
   if (existing) {
     existing.messages.push(text);
     existing.lastAt = now;
     existing.channelAdapter = channelAdapter;
+    existing.settings = nextSettings;
     existing.incoming = {
       ...existing.incoming,
       ...incoming,
@@ -1961,6 +1980,7 @@ async function bufferIncomingText({
         text,
       },
       channelAdapter,
+      settings: nextSettings,
       messages: [text],
       firstAt: now,
       lastAt: now,
@@ -1970,7 +1990,9 @@ async function bufferIncomingText({
   }
 
   const entry = TEXT_BUFFER_BY_CONVERSATION.get(key);
-  const reachedLimit = entry.messages.length >= TEXT_BUFFER_MAX_MESSAGES || now - entry.firstAt >= TEXT_BUFFER_MAX_WINDOW_MS;
+  const maxMessages = entry.settings?.text_buffer_max_messages || DEFAULT_TEXT_BUFFER_MAX_MESSAGES;
+  const maxWindowMs = entry.settings?.text_buffer_max_window_ms || DEFAULT_TEXT_BUFFER_MAX_WINDOW_MS;
+  const reachedLimit = entry.messages.length >= maxMessages || now - entry.firstAt >= maxWindowMs;
   if (reachedLimit) {
     return flushBufferedText(key, { force: true });
   }
@@ -2065,6 +2087,50 @@ async function resolveResumeNode({ tenantId, session, requestedNodeKey = null })
     throw new Error('No existe un nodo inicial activo para reanudar el bot');
   }
   return startNode;
+}
+
+async function stopConversationBot({
+  tenantId,
+  conversationId,
+  actor = 'admin',
+  reason = 'Bot detenido manualmente desde Comandos',
+}) {
+  const conversation = await getConversationById(tenantId, conversationId);
+  if (!conversation) {
+    throw new Error('Conversación no encontrada');
+  }
+
+  const session = await getActiveFlowSession(tenantId, conversationId);
+  if (session) {
+    const context = parseJson(session.context, {});
+    context.pending_input_for = null;
+    context.stopped_at = new Date().toISOString();
+    context.stopped_by = actor;
+    await updateFlowSession(session.id, {
+      status: 'escalated',
+      context,
+    });
+    await emitSessionUpdate(tenantId, session.id);
+  }
+
+  await query(
+    `UPDATE conversations
+     SET status = 'escalated',
+         inbox_state = 'open',
+         assigned_to = ?,
+         escalated_at = COALESCE(escalated_at, NOW()),
+         escalation_reason = ?
+     WHERE tenant_id = ? AND id = ?`,
+    [actor, reason, tenantId, conversationId]
+  );
+  broadcast('conversation:change', { id: conversationId, reason: 'manual-stop-bot' }, tenantId);
+
+  return {
+    conversation_id: conversationId,
+    session_id: session?.id || null,
+    status: 'escalated',
+    assigned_to: actor,
+  };
 }
 
 async function resumeConversationBot({ tenantId, conversationId, nodeKey = null, actor = 'admin' }) {
@@ -2239,6 +2305,8 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
   broadcast('message:change', { conversationId: conversation.id, messageId: inboundMessageId, direction: 'inbound' }, tenantId);
 
   const bufferKey = getTextBufferKey(tenantId, conversation.id);
+  const llmSettings = await getLlmSettings(tenantId).catch(() => null);
+  const textBufferSettings = normalizeTextBufferSettings(llmSettings || getDefaultTextBufferSettings());
   if (!shouldBufferIncomingText(incoming)) {
     clearBufferedText(bufferKey);
   }
@@ -2251,6 +2319,7 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
       incoming,
       channelAdapter,
       inboundMessageId,
+      settings: textBufferSettings,
     });
   }
 
@@ -2270,4 +2339,5 @@ module.exports = {
   formatMessageWithWorkshop,
   getCurrentNodeEnteredAt,
   resumeConversationBot,
+  stopConversationBot,
 };

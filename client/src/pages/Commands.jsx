@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { Icon } from '../components/layout/Sidebar'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { apiGet, apiPost, apiPut } from '../utils/api'
@@ -28,35 +28,35 @@ const ACTIONS = [
     label: 'Reanudar bot',
     icon: 'zap',
     tone: 'primary',
-    description: 'Devuelve la conversación al flujo automático.',
+    description: 'Reactiva la conversación y devuelve el control al bot.',
   },
   {
     id: 'stop-bot',
     label: 'Detener bot',
     icon: 'x',
     tone: 'danger',
-    description: 'Escala la conversación y corta nuevas respuestas del bot.',
+    description: 'Escala la conversación y evita que el bot siga respondiendo.',
   },
   {
     id: 'send-qr',
     label: 'Mandar QR',
     icon: 'qr',
     tone: 'secondary',
-    description: 'Reenvía el QR de pago de la inscripción activa.',
+    description: 'Reenvía el QR de pago de la inscripción elegida.',
   },
   {
     id: 'payment-reminder',
     label: 'Recordar pago',
     icon: 'dollar-sign',
     tone: 'secondary',
-    description: 'Vuelve a mandar las instrucciones de cobro.',
+    description: 'Reenvía las instrucciones de pago al lead.',
   },
   {
     id: 'practical-info',
     label: 'Datos prácticos',
     icon: 'message-circle',
     tone: 'secondary',
-    description: 'Envía ubicación, fecha y demás datos usando variables.',
+    description: 'Envía un mensaje operativo usando variables del taller y del lead.',
   },
 ]
 
@@ -100,8 +100,8 @@ function getConversationBadgeClass(status) {
   return 'badge badge-info'
 }
 
-function getActionRowClass(tone, isActive) {
-  const base = 'commands-action-row'
+function getActionButtonClass(tone, isActive) {
+  const base = 'commands-action-card'
   if (isActive) {
     if (tone === 'danger') return `${base} active danger`
     if (tone === 'primary') return `${base} active primary`
@@ -113,14 +113,10 @@ function getActionRowClass(tone, isActive) {
 }
 
 export default function Commands() {
-  const searchRef = useRef(null)
-
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query.trim())
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
-  const [recentLeads, setRecentLeads] = useState([])
-  const [loadingRecent, setLoadingRecent] = useState(true)
   const [selectedLead, setSelectedLead] = useState(null)
   const [loadingLead, setLoadingLead] = useState(false)
   const [activeAction, setActiveAction] = useState(null)
@@ -138,40 +134,10 @@ export default function Commands() {
     () => (selectedLead?.conversations || []).find((item) => String(item.id) === String(selectedConversationId)) || null,
     [selectedConversationId, selectedLead?.conversations]
   )
-
   const currentEnrollment = useMemo(
     () => (selectedLead?.enrollments || []).find((item) => String(item.id) === String(selectedEnrollmentId)) || null,
     [selectedEnrollmentId, selectedLead?.enrollments]
   )
-
-  const loadQuickSettings = useCallback(async () => {
-    try {
-      const settings = await apiGet('/api/ai/settings')
-      setQuickSettings((current) => ({
-        ...current,
-        practical_info_template: settings.practical_info_template || '',
-        text_buffer_idle_ms: settings.text_buffer_idle_ms ?? current.text_buffer_idle_ms,
-        text_buffer_max_messages: settings.text_buffer_max_messages ?? current.text_buffer_max_messages,
-        text_buffer_max_window_ms: settings.text_buffer_max_window_ms ?? current.text_buffer_max_window_ms,
-      }))
-      setSettingsDirty(false)
-      setPracticalDraft((current) => current || settings.practical_info_template || '')
-    } catch {
-      // El módulo sigue siendo usable aunque no refresque la configuración global
-    }
-  }, [])
-
-  const loadRecentLeads = useCallback(async () => {
-    setLoadingRecent(true)
-    try {
-      const response = await apiGet('/api/leads?view=commands_recent&limit=4')
-      setRecentLeads(response.data || [])
-    } catch {
-      setRecentLeads([])
-    } finally {
-      setLoadingRecent(false)
-    }
-  }, [])
 
   const applyLeadDetail = useCallback((detail) => {
     const nextConversation = (
@@ -210,11 +176,26 @@ export default function Commands() {
     }
   }, [applyLeadDetail, quickSettings.practical_info_template])
 
+  const loadQuickSettings = useCallback(async () => {
+    try {
+      const settings = await apiGet('/api/ai/settings')
+      setQuickSettings((current) => ({
+        ...current,
+        practical_info_template: settings.practical_info_template || '',
+        text_buffer_idle_ms: settings.text_buffer_idle_ms ?? current.text_buffer_idle_ms,
+        text_buffer_max_messages: settings.text_buffer_max_messages ?? current.text_buffer_max_messages,
+        text_buffer_max_window_ms: settings.text_buffer_max_window_ms ?? current.text_buffer_max_window_ms,
+      }))
+      setSettingsDirty(false)
+      setPracticalDraft((current) => current || settings.practical_info_template || '')
+    } catch {
+      // Silencio: el panel sigue siendo usable sin refrescar config
+    }
+  }, [])
+
   useEffect(() => {
     loadQuickSettings()
-    loadRecentLeads()
-    searchRef.current?.focus()
-  }, [loadQuickSettings, loadRecentLeads])
+  }, [loadQuickSettings])
 
   useEffect(() => {
     if (deferredQuery.length < 2) {
@@ -228,11 +209,17 @@ export default function Commands() {
     const timeout = window.setTimeout(async () => {
       try {
         const response = await apiGet(`/api/leads?search=${encodeURIComponent(deferredQuery)}&limit=12`)
-        if (!cancelled) setResults(response.data || [])
-      } catch {
-        if (!cancelled) setResults([])
+        if (!cancelled) {
+          setResults(response.data || [])
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setResults([])
+        }
       } finally {
-        if (!cancelled) setSearching(false)
+        if (!cancelled) {
+          setSearching(false)
+        }
       }
     }, 220)
 
@@ -244,27 +231,23 @@ export default function Commands() {
 
   useAdminEvents({
     'lead:change': (payload) => {
-      loadRecentLeads()
       if (selectedLead?.id && Number(payload?.id) === Number(selectedLead.id)) {
         loadLeadDetail(selectedLead.id)
       }
     },
     'conversation:change': (payload) => {
-      loadRecentLeads()
       const hasConversation = (selectedLead?.conversations || []).some((item) => Number(item.id) === Number(payload?.id))
       if (selectedLead?.id && hasConversation) {
         loadLeadDetail(selectedLead.id)
       }
     },
-  }, true)
+  }, Boolean(selectedLead?.id))
 
   function handleSelectLead(leadRow) {
-    if (Number(leadRow.id) === Number(selectedLead?.id)) {
-      clearLead()
-      return
-    }
     setActionResult(null)
     setActiveAction(null)
+    setQuery('')
+    setResults([])
     setPracticalDraft(quickSettings.practical_info_template || '')
     loadLeadDetail(leadRow.id)
   }
@@ -284,80 +267,79 @@ export default function Commands() {
     setActionResult(null)
 
     try {
-      switch (actionId) {
-        case 'resume-bot': {
-          if (!selectedConversationId) throw new Error('Este lead no tiene conversación para reanudar')
-          const response = await apiPost(`/api/conversations/${selectedConversationId}/resume-bot`, { node_key: null })
-          setActionResult({
-            success: true,
-            title: 'Bot reanudado',
-            detail: response.responses_sent > 0
-              ? `Se reenviaron ${response.responses_sent} mensaje(s) desde ${response.resumed_node_name || response.resumed_node_key}.`
-              : 'La conversación volvió a quedar en manos del bot.',
-          })
-          break
+      if (actionId === 'resume-bot') {
+        if (!selectedConversationId) {
+          throw new Error('Este lead no tiene conversación para reanudar')
         }
-
-        case 'stop-bot': {
-          if (!selectedConversationId) throw new Error('Este lead no tiene conversación para pausar')
-          await apiPost(`/api/conversations/${selectedConversationId}/stop-bot`, {})
-          setActionResult({
-            success: true,
-            title: 'Bot detenido',
-            detail: 'La conversación quedó escalada para atención manual.',
-          })
-          break
-        }
-
-        case 'send-qr': {
-          if (!selectedEnrollmentId) throw new Error('No hay inscripción disponible para reenviar QR')
-          const response = await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-qr`, {})
-          setActionResult({
-            success: true,
-            title: 'QR reenviado',
-            detail: response?.result?.amount
-              ? `Se reenviaron datos de cobro por ${formatCurrency(response.result.amount)}.`
-              : 'El QR salió nuevamente por el canal del lead.',
-          })
-          break
-        }
-
-        case 'payment-reminder': {
-          if (!selectedEnrollmentId) throw new Error('No hay inscripción disponible para recordar el pago')
-          await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-instructions`, {})
-          setActionResult({
-            success: true,
-            title: 'Recordatorio enviado',
-            detail: 'Se reenviaron las instrucciones de pago del taller.',
-          })
-          break
-        }
-
-        case 'practical-info': {
-          if (!selectedConversationId) throw new Error('Este lead no tiene conversación para enviar datos prácticos')
-          if (!practicalDraft.trim()) throw new Error('Escribe un template de datos prácticos antes de enviar')
-          const response = await apiPost(`/api/conversations/${selectedConversationId}/send-practical-info`, {
-            enrollment_id: selectedEnrollmentId || null,
-            template: practicalDraft,
-          })
-          setActionResult({
-            success: true,
-            title: 'Datos prácticos enviados',
-            detail: response.workshop_name
-              ? `Mensaje enviado usando datos de ${response.workshop_name}.`
-              : 'Mensaje operativo enviado correctamente.',
-          })
-          break
-        }
-
-        default:
-          break
+        const response = await apiPost(`/api/conversations/${selectedConversationId}/resume-bot`, { node_key: null })
+        setActionResult({
+          success: true,
+          title: 'Bot reanudado',
+          detail: response.responses_sent > 0
+            ? `Se reenviaron ${response.responses_sent} mensaje(s) desde ${response.resumed_node_name || response.resumed_node_key}.`
+            : 'La conversación volvió a quedar en manos del bot.',
+        })
       }
 
-      await Promise.all([
-        loadLeadDetail(selectedLead.id),
-        loadRecentLeads(),
-      ])
+      if (actionId === 'stop-bot') {
+        if (!selectedConversationId) {
+          throw new Error('Este lead no tiene conversación para pausar')
+        }
+        await apiPost(`/api/conversations/${selectedConversationId}/stop-bot`, {})
+        setActionResult({
+          success: true,
+          title: 'Bot detenido',
+          detail: 'La conversación quedó escalada para atención manual.',
+        })
+      }
+
+      if (actionId === 'send-qr') {
+        if (!selectedEnrollmentId) {
+          throw new Error('No hay inscripción disponible para reenviar QR')
+        }
+        const response = await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-qr`, {})
+        setActionResult({
+          success: true,
+          title: 'QR reenviado',
+          detail: response?.result?.amount
+            ? `Se reenviaron datos de cobro por ${formatCurrency(response.result.amount)}.`
+            : 'El QR salió nuevamente por el canal del lead.',
+        })
+      }
+
+      if (actionId === 'payment-reminder') {
+        if (!selectedEnrollmentId) {
+          throw new Error('No hay inscripción disponible para recordar el pago')
+        }
+        await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-instructions`, {})
+        setActionResult({
+          success: true,
+          title: 'Recordatorio enviado',
+          detail: 'Se reenviaron las instrucciones de pago del taller.',
+        })
+      }
+
+      if (actionId === 'practical-info') {
+        if (!selectedConversationId) {
+          throw new Error('Este lead no tiene conversación para enviar datos prácticos')
+        }
+        if (!practicalDraft.trim()) {
+          throw new Error('Escribe un template de datos prácticos antes de enviar')
+        }
+        const response = await apiPost(`/api/conversations/${selectedConversationId}/send-practical-info`, {
+          enrollment_id: selectedEnrollmentId || null,
+          template: practicalDraft,
+        })
+        setActionResult({
+          success: true,
+          title: 'Datos prácticos enviados',
+          detail: response.workshop_name
+            ? `Mensaje enviado usando datos de ${response.workshop_name}.`
+            : 'Mensaje operativo enviado correctamente.',
+        })
+      }
+
+      await loadLeadDetail(selectedLead.id)
     } catch (err) {
       setActionResult({
         success: false,
@@ -386,12 +368,12 @@ export default function Commands() {
         text_buffer_max_messages: updated.text_buffer_max_messages,
         text_buffer_max_window_ms: updated.text_buffer_max_window_ms,
       }))
-      setPracticalDraft(updated.practical_info_template || '')
       setSettingsDirty(false)
+      setPracticalDraft(updated.practical_info_template || '')
       setActionResult({
         success: true,
         title: 'Ajustes guardados',
-        detail: 'Los cambios ya aplican al buffer del bot y al template práctico.',
+        detail: 'El panel ya usa los nuevos tiempos y template práctico.',
       })
     } catch (err) {
       setActionResult({
@@ -414,192 +396,183 @@ export default function Commands() {
 
   const leadHeaderConversation = currentConversation || pickPreferredConversation(selectedLead?.conversations || [])
   const leadHeaderEnrollment = currentEnrollment || pickPreferredEnrollment(selectedLead?.enrollments || [])
-  const showingSearch = deferredQuery.length >= 2
-  const leadItems = showingSearch ? results : recentLeads
-  const discoveryTitle = showingSearch ? 'Resultados de búsqueda' : '4 leads más recientes'
-  const discoveryHelp = showingSearch
-    ? 'Elige un lead para abrir debajo sus acciones operativas.'
-    : 'Acceso directo a los últimos leads con interacción reciente.'
 
   return (
-    <div className="commands-page">
-      <section className="card commands-search-shell">
-        <div className="commands-search-copy">
-          <div className="commands-overline">Comandos</div>
-          <h1 className="commands-heading">Acciones rápidas sobre leads</h1>
-          <p className="commands-subtitle">
-            Busca por nombre o celular, o entra directo desde los cuatro contactos más recientes.
-          </p>
+    <div className="commands-shell">
+      <div className="commands-head">
+        <div>
+          <h1 className="page-title">Comandos</h1>
+          <div className="text-muted">
+            Acciones rápidas sobre leads, conversación y cobro sin entrar a varios módulos.
+          </div>
         </div>
+      </div>
 
-        <div className="commands-search-box">
-          <div className="commands-search-input-wrap commands-search-input-wrap-large">
-            <Icon name="command" size={20} />
+      <div className="card mt-4">
+        <div className="commands-search-row">
+          <div className="commands-search-input-wrap">
+            <Icon name="message-circle" size={18} />
             <input
-              ref={searchRef}
-              className="input commands-search-input commands-search-input-large"
+              className="input commands-search-input"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Buscar lead por nombre o celular..."
-              autoComplete="off"
             />
           </div>
-          {query ? (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                setQuery('')
-                setResults([])
-                searchRef.current?.focus()
-              }}
-            >
-              Limpiar búsqueda
+          {selectedLead ? (
+            <button type="button" className="btn btn-ghost" onClick={clearLead}>
+              Limpiar
             </button>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="card mt-4">
-        <div className="commands-section-head">
-          <div>
-            <h2 className="card-title">{discoveryTitle}</h2>
-            <div className="text-muted text-sm">{discoveryHelp}</div>
-          </div>
-          {!showingSearch ? (
-            <span className="badge badge-info">En vivo</span>
           ) : null}
         </div>
 
         {searching ? (
-          <div className="commands-empty-block mt-4">Buscando leads...</div>
+          <div className="text-muted text-sm mt-4">Buscando leads...</div>
         ) : null}
 
-        {!searching && showingSearch && results.length === 0 ? (
-          <div className="commands-empty-block mt-4">No se encontraron leads con esa búsqueda.</div>
+        {!searching && query.trim().length >= 2 && results.length === 0 ? (
+          <div className="text-muted text-sm mt-4">No se encontraron leads.</div>
         ) : null}
 
-        {!loadingRecent && !showingSearch && recentLeads.length === 0 ? (
-          <div className="commands-empty-block mt-4">Todavía no hay leads recientes para accionar.</div>
-        ) : null}
-
-        {!searching && leadItems.length > 0 ? (
-          <div className="commands-lead-grid mt-4">
-            {leadItems.map((lead) => (
-              <LeadCard
+        {!selectedLead && results.length > 0 ? (
+          <div className="commands-result-list mt-4">
+            {results.map((lead) => (
+              <button
                 key={lead.id}
-                lead={lead}
-                active={Number(lead.id) === Number(selectedLead?.id)}
+                type="button"
+                className="commands-result-row"
                 onClick={() => handleSelectLead(lead)}
-              />
+              >
+                <div>
+                  <div className="font-semibold">{lead.name || 'Sin nombre'}</div>
+                  <div className="text-sm text-secondary">{lead.phone || 'Sin celular'} · {lead.city || 'Sin ciudad'}</div>
+                </div>
+                <div className={getLeadBadgeClass(lead.status)}>
+                  {LEAD_STATUS_LABELS[lead.status] || lead.status || 'Lead'}
+                </div>
+              </button>
             ))}
           </div>
         ) : null}
-      </section>
+      </div>
 
-      <section className="card mt-4 commands-selected-card">
-        {loadingLead ? (
-          <div className="commands-empty-block">Cargando panel del lead...</div>
-        ) : selectedLead ? (
-          <>
-            <div className="commands-selected-header">
-              <div className="commands-selected-identity">
-                <div className="commands-selected-avatar">{buildInitials(selectedLead.name)}</div>
-                <div className="commands-selected-copy">
-                  <div className="commands-selected-name">{selectedLead.name || 'Sin nombre'}</div>
-                  <div className="commands-selected-meta">
-                    <span>{selectedLead.phone || 'Sin celular'}</span>
-                    <span>{selectedLead.city || 'Sin ciudad'}</span>
-                    <span>{selectedLead.source || 'Sin fuente'}</span>
+      {loadingLead ? (
+        <div className="card mt-4 text-muted">Cargando ficha del lead...</div>
+      ) : null}
+
+      {selectedLead ? (
+        <div className="commands-layout mt-4">
+          <div className="commands-main">
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">{selectedLead.name || 'Sin nombre'}</h2>
+                  <div className="text-sm text-muted">
+                    {selectedLead.phone || 'Sin celular'} · {selectedLead.city || 'Sin ciudad'} · {selectedLead.source || 'Sin fuente'}
                   </div>
-                  <div className="commands-chip-wrap">
-                    <span className={getLeadBadgeClass(selectedLead.status)}>
-                      {LEAD_STATUS_LABELS[selectedLead.status] || selectedLead.status || 'Lead'}
+                </div>
+                <div className="commands-chip-wrap">
+                  <span className={getLeadBadgeClass(selectedLead.status)}>
+                    {LEAD_STATUS_LABELS[selectedLead.status] || selectedLead.status || 'Lead'}
+                  </span>
+                  {leadHeaderConversation ? (
+                    <span className={getConversationBadgeClass(leadHeaderConversation.status)}>
+                      {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status}
                     </span>
-                    {leadHeaderConversation ? (
-                      <span className={getConversationBadgeClass(leadHeaderConversation.status)}>
-                        {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status}
-                      </span>
-                    ) : null}
-                    {leadHeaderEnrollment ? (
-                      <span className="badge badge-success">
-                        {leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status || 'Inscripción'}
-                      </span>
-                    ) : null}
-                  </div>
+                  ) : null}
                 </div>
               </div>
 
-              <button type="button" className="btn btn-ghost" onClick={clearLead}>
-                Cerrar panel
-              </button>
-            </div>
+              <div className="lead-summary-grid">
+                <LeadMeta label="Último contacto" value={selectedLead.last_contact_at ? timeAgo(selectedLead.last_contact_at) : '—'} />
+                <LeadMeta label="Conversaciones" value={String(selectedLead.conversations?.length || 0)} />
+                <LeadMeta label="Inscripciones" value={String(selectedLead.enrollments?.length || 0)} />
+                <LeadMeta label="Pago actual" value={leadHeaderEnrollment ? `${leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status}` : '—'} />
+              </div>
 
-            <div className="commands-summary-strip">
-              <SummaryItem label="Último contacto" value={selectedLead.last_contact_at ? timeAgo(selectedLead.last_contact_at) : 'Sin interacción'} />
-              <SummaryItem
-                label="Conversación activa"
-                value={leadHeaderConversation
-                  ? `${CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status} · ${leadHeaderConversation.workshop_name || 'General'}`
-                  : 'Sin conversación'}
-              />
-              <SummaryItem
-                label="Inscripción útil"
-                value={leadHeaderEnrollment
-                  ? `${leadHeaderEnrollment.workshop_name || 'Sin taller'} · ${leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status}`
-                  : 'Sin inscripción'}
-              />
-              <SummaryItem
-                label="Monto pendiente"
-                value={leadHeaderEnrollment?.amount_due ? formatCurrency(leadHeaderEnrollment.amount_due) : 'No aplica'}
-              />
-            </div>
-
-            <div className="commands-actions-list">
-              {ACTIONS.map((action) => {
-                const isActive = activeAction === action.id
-                return (
-                  <div key={action.id} className={getActionRowClass(action.tone, isActive)}>
-                    <button
-                      type="button"
-                      className="commands-action-trigger"
-                      onClick={() => setActiveAction((current) => current === action.id ? null : action.id)}
-                    >
-                      <span className="commands-action-trigger-main">
-                        <span className="commands-action-icon">
-                          <Icon name={action.icon} size={18} />
-                        </span>
-                        <span>
-                          <span className="commands-action-label">{action.label}</span>
-                          <span className="commands-action-description">{action.description}</span>
-                        </span>
-                      </span>
-                      <span className="commands-action-toggle">{isActive ? 'Ocultar' : 'Abrir'}</span>
-                    </button>
-
-                    {isActive ? (
-                      <div className="commands-action-drawer">
-                        <ActionPanel
-                          actionId={activeAction}
-                          currentConversation={currentConversation}
-                          currentEnrollment={currentEnrollment}
-                          conversations={selectedLead.conversations || []}
-                          enrollments={selectedLead.enrollments || []}
-                          selectedConversationId={selectedConversationId}
-                          setSelectedConversationId={setSelectedConversationId}
-                          selectedEnrollmentId={selectedEnrollmentId}
-                          setSelectedEnrollmentId={setSelectedEnrollmentId}
-                          practicalDraft={practicalDraft}
-                          setPracticalDraft={setPracticalDraft}
-                          quickSettings={quickSettings}
-                          actionLoading={actionLoading}
-                          onExecute={executeAction}
-                        />
+              <div className="commands-context-grid mt-4">
+                <div className="commands-context-card">
+                  <div className="commands-context-title">Conversación activa</div>
+                  {leadHeaderConversation ? (
+                    <>
+                      <div className="font-semibold mt-1">{leadHeaderConversation.workshop_name || 'Sin taller'}</div>
+                      <div className="text-sm text-secondary mt-1">
+                        {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status} · {leadHeaderConversation.assigned_to || 'bot'}
                       </div>
-                    ) : null}
-                  </div>
-                )
-              })}
+                      <div className="text-xs text-muted mt-1">
+                        {leadHeaderConversation.escalation_reason || 'Sin motivo de escalamiento'}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted mt-1">Este lead todavía no tiene conversación vinculada.</div>
+                  )}
+                </div>
+
+                <div className="commands-context-card">
+                  <div className="commands-context-title">Inscripción útil</div>
+                  {leadHeaderEnrollment ? (
+                    <>
+                      <div className="font-semibold mt-1">{leadHeaderEnrollment.workshop_name || 'Sin taller'}</div>
+                      <div className="text-sm text-secondary mt-1">
+                        {leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status}
+                        {leadHeaderEnrollment.amount_due ? ` · ${formatCurrency(leadHeaderEnrollment.amount_due)}` : ''}
+                      </div>
+                      <div className="text-xs text-muted mt-1">
+                        {leadHeaderEnrollment.payment_requested_at
+                          ? `Pedido ${formatDateTime(leadHeaderEnrollment.payment_requested_at)}`
+                          : 'Sin recordatorio de pago todavía'}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted mt-1">No hay inscripción lista para QR o cobro.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="card mt-4">
+              <div className="card-header">
+                <h2 className="card-title">Acciones rápidas</h2>
+              </div>
+
+              <div className="commands-actions-grid">
+                {ACTIONS.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className={getActionButtonClass(action.tone, activeAction === action.id)}
+                    onClick={() => setActiveAction((current) => current === action.id ? null : action.id)}
+                  >
+                    <Icon name={action.icon} size={18} />
+                    <span>{action.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {activeAction ? (
+                <div className="commands-action-panel">
+                  <ActionPanel
+                    actionId={activeAction}
+                    currentConversation={currentConversation}
+                    currentEnrollment={currentEnrollment}
+                    conversations={selectedLead.conversations || []}
+                    enrollments={selectedLead.enrollments || []}
+                    selectedConversationId={selectedConversationId}
+                    setSelectedConversationId={setSelectedConversationId}
+                    selectedEnrollmentId={selectedEnrollmentId}
+                    setSelectedEnrollmentId={setSelectedEnrollmentId}
+                    practicalDraft={practicalDraft}
+                    setPracticalDraft={setPracticalDraft}
+                    quickSettings={quickSettings}
+                    actionLoading={actionLoading}
+                    onExecute={executeAction}
+                  />
+                </div>
+              ) : (
+                <div className="text-sm text-muted mt-4">
+                  Elige una acción para abrir su panel contextual.
+                </div>
+              )}
             </div>
 
             {actionResult ? (
@@ -608,109 +581,96 @@ export default function Commands() {
                 {actionResult.detail ? <div className="text-sm mt-1">{actionResult.detail}</div> : null}
               </div>
             ) : null}
-          </>
-        ) : (
-          <div className="commands-empty-block">
-            Selecciona un lead arriba. Su panel de acciones se abre aquí mismo, sin cambiar de pantalla.
           </div>
-        )}
-      </section>
 
-      <section className="card mt-4 commands-quick-card">
-        <button
-          type="button"
-          className="commands-quick-header"
-          onClick={() => setSettingsOpen((current) => !current)}
-        >
-          <div>
-            <h2 className="card-title">Ajustes rápidos</h2>
-            <div className="text-muted text-sm">Configuración global del bot y del mensaje práctico.</div>
-          </div>
-          <div className="commands-quick-summary">
-            <span className="commands-summary-pill">{quickSettings.text_buffer_idle_ms} ms</span>
-            <span className="commands-summary-pill">{quickSettings.text_buffer_max_messages} msgs</span>
-            <span className="commands-summary-pill">{quickSettings.text_buffer_max_window_ms} ms</span>
-            <span className="commands-summary-pill">{settingsOpen ? 'Ocultar' : 'Abrir'}</span>
-          </div>
-        </button>
-
-        {settingsOpen ? (
-          <div className="commands-quick-body">
-            <div className="commands-quick-grid">
-              <QuickSettingCard
-                title="Pausa mínima"
-                description="Espera antes de responder cuando el lead sigue escribiendo."
-                value={quickSettings.text_buffer_idle_ms}
-                suffix="ms"
+          <div className="commands-side">
+            <div className="card">
+              <button
+                type="button"
+                className="commands-settings-toggle"
+                onClick={() => setSettingsOpen((current) => !current)}
               >
-                <input
-                  className="input"
-                  type="number"
-                  min="500"
-                  step="100"
-                  value={quickSettings.text_buffer_idle_ms}
-                  onChange={(event) => updateQuickSetting('text_buffer_idle_ms', event.target.value)}
-                />
-              </QuickSettingCard>
-
-              <QuickSettingCard
-                title="Mensajes agrupados"
-                description="Cantidad máxima de mensajes que se fusionan antes de disparar respuesta."
-                value={quickSettings.text_buffer_max_messages}
-                suffix="msgs"
-              >
-                <input
-                  className="input"
-                  type="number"
-                  min="1"
-                  max="20"
-                  value={quickSettings.text_buffer_max_messages}
-                  onChange={(event) => updateQuickSetting('text_buffer_max_messages', event.target.value)}
-                />
-              </QuickSettingCard>
-
-              <QuickSettingCard
-                title="Ventana máxima"
-                description="Tiempo total de espera acumulado antes de responder sí o sí."
-                value={quickSettings.text_buffer_max_window_ms}
-                suffix="ms"
-              >
-                <input
-                  className="input"
-                  type="number"
-                  min="1000"
-                  step="500"
-                  value={quickSettings.text_buffer_max_window_ms}
-                  onChange={(event) => updateQuickSetting('text_buffer_max_window_ms', event.target.value)}
-                />
-              </QuickSettingCard>
-            </div>
-
-            <div className="form-group mt-4">
-              <label>Template de datos prácticos</label>
-              <textarea
-                className="input textarea"
-                rows={10}
-                value={quickSettings.practical_info_template}
-                onChange={(event) => updateQuickSetting('practical_info_template', event.target.value)}
-              />
-            </div>
-
-            <div className="text-muted text-sm">
-              Variables disponibles: [NOMBRE], [NOMBRE_COMPLETO], [CELULAR], [TALLER], [FECHA], [HORA_INICIO], [HORA_FIN], [VENUE], [VENUE_DIRECCION], [MODALIDAD], [MONTO], [PRECIO], [PRECIO_NORMAL], [PRECIO_EARLY_BIRD], [PRECIO_GRUPAL].
-            </div>
-
-            <div className="commands-quick-footer mt-4">
-              <button type="button" className="btn btn-primary" onClick={saveQuickSettings} disabled={settingsSaving}>
-                {settingsSaving ? 'Guardando...' : 'Guardar ajustes rápidos'}
+                <span className="font-semibold">Ajustes rápidos</span>
+                <span className="text-muted text-sm">{settingsOpen ? 'Ocultar' : 'Abrir'}</span>
               </button>
-              <span className={`badge ${settingsDirty ? 'badge-warning' : 'badge-success'}`}>
-                {settingsDirty ? 'Hay cambios sin guardar' : 'Sin cambios pendientes'}
-              </span>
+
+              {settingsOpen ? (
+                <div className="commands-settings-body">
+                  <div className="form-group">
+                    <label>Buffer: pausa mínima antes de responder (ms)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min="500"
+                      step="100"
+                      value={quickSettings.text_buffer_idle_ms}
+                      onChange={(event) => updateQuickSetting('text_buffer_idle_ms', event.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Buffer: máximo de mensajes agrupados</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={quickSettings.text_buffer_max_messages}
+                      onChange={(event) => updateQuickSetting('text_buffer_max_messages', event.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Buffer: ventana máxima acumulada (ms)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min="1000"
+                      step="500"
+                      value={quickSettings.text_buffer_max_window_ms}
+                      onChange={(event) => updateQuickSetting('text_buffer_max_window_ms', event.target.value)}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Template de datos prácticos</label>
+                    <textarea
+                      className="input textarea"
+                      rows={12}
+                      value={quickSettings.practical_info_template}
+                      onChange={(event) => updateQuickSetting('practical_info_template', event.target.value)}
+                    />
+                  </div>
+
+                  <div className="text-muted text-sm">
+                    Variables disponibles: [NOMBRE], [NOMBRE_COMPLETO], [CELULAR], [TALLER], [FECHA], [HORA_INICIO], [HORA_FIN], [VENUE], [VENUE_DIRECCION], [MODALIDAD], [MONTO], [PRECIO], [PRECIO_NORMAL], [PRECIO_EARLY_BIRD], [PRECIO_GRUPAL].
+                  </div>
+
+                  <button type="button" className="btn btn-primary mt-4" onClick={saveQuickSettings} disabled={settingsSaving}>
+                    {settingsSaving ? 'Guardando...' : 'Guardar ajustes rápidos'}
+                  </button>
+
+                  <div className="mt-4">
+                    {settingsSaving ? (
+                      <span className="badge badge-info">Guardando...</span>
+                    ) : settingsDirty ? (
+                      <span className="badge badge-warning">Hay cambios sin guardar</span>
+                    ) : (
+                      <span className="badge badge-success">Sin cambios pendientes</span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
-        ) : null}
-      </section>
+        </div>
+      ) : (
+        <div className="card mt-4">
+          <div className="commands-empty">
+            Busca un lead y abre acciones rápidas para reanudar bot, detenerlo, reenviar QR, recordar pago o mandar datos prácticos.
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -736,8 +696,14 @@ function ActionPanel({
 
   return (
     <div>
+      <div className="commands-action-title">
+        <Icon name={action.icon} size={16} />
+        <span>{action.label}</span>
+      </div>
+      <div className="text-sm text-muted mt-1">{action.description}</div>
+
       {(actionId === 'resume-bot' || actionId === 'stop-bot' || actionId === 'practical-info') ? (
-        <div className="form-group">
+        <div className="form-group mt-4">
           <label>Conversación</label>
           <select
             className="input"
@@ -754,8 +720,7 @@ function ActionPanel({
           </select>
           {currentConversation ? (
             <div className="text-xs text-muted mt-1">
-              Asignada a {currentConversation.assigned_to || 'bot'}
-              {currentConversation.current_phase ? ` · fase ${currentConversation.current_phase}` : ''}
+              Asignada a {currentConversation.assigned_to || 'bot'} · fase {currentConversation.current_phase || 'sin fase'}
             </div>
           ) : null}
         </div>
@@ -799,72 +764,23 @@ function ActionPanel({
         </div>
       ) : null}
 
-      <div className="commands-action-footer">
-        <button
-          type="button"
-          className={`btn ${action.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
-          onClick={() => onExecute(actionId)}
-          disabled={actionLoading === actionId}
-        >
-          {actionLoading === actionId ? 'Ejecutando...' : action.label}
-        </button>
-      </div>
+      <button
+        type="button"
+        className={`btn mt-4 ${action.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
+        onClick={() => onExecute(actionId)}
+        disabled={actionLoading === actionId}
+      >
+        {actionLoading === actionId ? 'Ejecutando...' : action.label}
+      </button>
     </div>
   )
 }
 
-function LeadCard({ lead, active, onClick }) {
+function LeadMeta({ label, value }) {
   return (
-    <button type="button" className={`commands-lead-card ${active ? 'active' : ''}`} onClick={onClick}>
-      <div className="commands-lead-card-top">
-        <div className="commands-lead-avatar">{buildInitials(lead.name)}</div>
-        <div className="commands-lead-meta">
-          <div className="font-semibold">{lead.name || 'Sin nombre'}</div>
-          <div className="text-sm text-secondary">{lead.phone || 'Sin celular'}</div>
-        </div>
-      </div>
-
-      <div className="commands-lead-card-bottom">
-        <span className={getLeadBadgeClass(lead.status)}>
-          {LEAD_STATUS_LABELS[lead.status] || lead.status || 'Lead'}
-        </span>
-        <span className="text-xs text-muted">
-          {lead.last_contact_at ? timeAgo(lead.last_contact_at) : 'sin interacción'}
-        </span>
-      </div>
-    </button>
-  )
-}
-
-function QuickSettingCard({ title, description, value, suffix, children }) {
-  return (
-    <div className="commands-setting-card">
-      <div className="commands-setting-top">
-        <div>
-          <div className="font-semibold">{title}</div>
-          <div className="text-sm text-secondary mt-1">{description}</div>
-        </div>
-        <div className="commands-setting-value">
-          {value}{suffix ? ` ${suffix}` : ''}
-        </div>
-      </div>
-      <div className="mt-3">{children}</div>
+    <div className="lead-meta-card">
+      <div className="text-muted text-sm">{label}</div>
+      <div className="font-semibold mt-1">{value}</div>
     </div>
   )
-}
-
-function SummaryItem({ label, value }) {
-  return (
-    <div className="commands-summary-item">
-      <div className="commands-summary-label">{label}</div>
-      <div className="commands-summary-value">{value}</div>
-    </div>
-  )
-}
-
-function buildInitials(name) {
-  const normalized = String(name || '').trim()
-  if (!normalized) return 'LD'
-  const parts = normalized.split(/\s+/).slice(0, 2)
-  return parts.map((part) => part[0]?.toUpperCase() || '').join('')
 }

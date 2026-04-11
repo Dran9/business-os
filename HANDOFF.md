@@ -5,6 +5,58 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-11 — SESIÓN 30 (completada)
+
+### Resumen
+Se descartó el rediseño agresivo de `Comandos` y se volvió a la primera versión visual del panel (la de `edd4033`), conservando únicamente las adaptaciones mínimas necesarias para que siga funcionando con el backend actual y con el módulo `IA` ya existente.
+
+### Lo implementado en esta sesión
+1. **Rollback selectivo de Comandos**
+   - `client/src/pages/Commands.jsx`
+   - se restauró la composición original del primer panel:
+     - buscador simple
+     - resultados de búsqueda
+     - layout principal + sidebar
+     - acciones rápidas en grilla
+     - ajustes rápidos en la columna lateral
+
+2. **Compatibilidad con backend actual**
+   - `client/src/pages/Commands.jsx`
+   - no se hizo rollback completo del repo
+   - se mantuvo compatibilidad con:
+     - `GET /api/ai/settings`
+     - `PUT /api/ai/settings`
+   - se reemplazó el `alert()` viejo por notice inline para no degradar la UX ni el manejo de errores
+
+3. **Restauración visual cuidadosa**
+   - `client/src/index.css`
+   - se reimpusieron las clases del layout original de `Comandos`
+   - se evitó tocar backend, módulo `IA` o rutas añadidas después de `edd4033`
+
+4. **Build para despliegue**
+   - `client/dist/*`
+   - frontend recompilado con el rollback selectivo ya aplicado
+
+### Decisión técnica
+1. No se usó `git reset` ni rollback completo del repo porque `edd4033` es anterior a:
+   - `client/src/pages/AI.jsx`
+   - `server/routes/ai.js`
+   - `server/services/aiContextDocuments.js`
+   - cambios de `server/db.js`, `App.jsx` y `Sidebar.jsx`
+2. La opción segura fue:
+   - restaurar solo `Comandos`
+   - mantener backend y módulos nuevos
+   - recompilar y verificar
+
+### Verificación
+1. `cd client && npm run build`: OK
+
+### Archivos principales tocados en esta sesión
+- `client/src/pages/Commands.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `HANDOFF.md`
+
 ## Estado actual: 2026-04-11 — SESIÓN 29 (completada)
 
 ### Resumen

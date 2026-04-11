@@ -5,6 +5,132 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-11 — SESIÓN 28 (completada)
+
+### Resumen
+Se rehizo `Comandos` para que funcione como panel táctico real: ahora usa el icono correcto de `agenda4.0`, muestra hasta 4 leads con interacción reciente excluyendo compras cerradas, separa los ajustes rápidos como configuración global y deja el contexto de IA en un módulo propio con carga de documentos.
+
+### Lo implementado en esta sesión
+1. **Sidebar y navegación**
+   - `client/src/components/layout/Sidebar.jsx`
+   - `client/src/App.jsx`
+   - `Comandos` quedó arriba de todo
+   - se reemplazó el icono anterior por el `Command` real de Lucide, igual al usado en `agenda4.0`
+   - se añadió el módulo lateral `IA` con icono de cerebro
+
+2. **Comandos rehecho como panel visual**
+   - `client/src/pages/Commands.jsx`
+   - `client/src/index.css`
+   - nuevo layout con:
+     - hero operativo
+     - bloque de leads recientes
+     - foco del lead seleccionado
+     - bloque de acciones rápidas
+     - bloque de `Ajustes rápidos`
+   - el buscador sigue disponible, pero por defecto muestra leads recientes en vez de una pantalla vacía
+
+3. **Leads recientes correctos**
+   - `server/routes/leads.js`
+   - nuevo `view=commands_recent`
+   - devuelve hasta `4` leads:
+     - con `last_contact_at`
+     - no `converted`
+     - no `lost`
+     - sin compra cerrada (`payment_status = paid` o `status = confirmed`)
+   - ordenados por interacción más reciente
+
+4. **Ajustes rápidos globales**
+   - `client/src/pages/Commands.jsx`
+   - `Comandos` ya no trata estos ajustes como si pertenecieran al lead activo
+   - se dejan como configuración global del tenant para:
+     - `text_buffer_idle_ms`
+     - `text_buffer_max_messages`
+     - `text_buffer_max_window_ms`
+     - `practical_info_template`
+   - el guardado ahora usa `PUT /api/ai/settings`
+
+5. **Nuevo módulo IA**
+   - `client/src/pages/AI.jsx`
+   - `client/src/index.css`
+   - `client/src/pages/Settings.jsx`
+   - se movió fuera de `Configuración` el bloque de `Contexto global de IA`
+   - nuevo panel con:
+     - textarea de contexto base
+     - biblioteca de documentos
+     - upload visual
+     - activar / pausar documentos
+     - eliminar documentos
+
+6. **Backend para documentos IA**
+   - `server/db.js`
+   - `server/routes/ai.js`
+   - `server/services/aiContextDocuments.js`
+   - `server/index.js`
+   - nueva tabla:
+     - `ai_context_documents`
+   - nuevos endpoints:
+     - `GET /api/ai/settings`
+     - `PUT /api/ai/settings`
+     - `GET /api/ai/documents`
+     - `POST /api/ai/documents`
+     - `PUT /api/ai/documents/:id`
+     - `DELETE /api/ai/documents/:id`
+   - formatos soportados:
+     - `txt`
+     - `md`
+     - `csv`
+     - `json`
+     - `html`
+     - `xml`
+     - `pdf`
+
+7. **Prompt del bot con documentos activos**
+   - `server/services/chatbot/flowEngine.js`
+   - `server/services/ocr.js`
+   - el bot ya concatena:
+     - contexto global del tenant
+     - contexto puntual del lead
+     - documentos activos del módulo IA
+   - para PDF se reutiliza `extractPdfText`
+   - requiere `GOOGLE_VISION_API_KEY` para leer PDFs
+
+8. **Build y despliegue**
+   - `client/dist/*`
+   - se recompiló frontend y se dejó el `dist` listo para Hostinger
+
+### Verificación
+1. `node --check` OK en:
+   - `server/index.js`
+   - `server/routes/ai.js`
+   - `server/routes/leads.js`
+   - `server/services/aiContextDocuments.js`
+   - `server/services/chatbot/flowEngine.js`
+2. `cd client && npm run build`: OK
+
+### Git
+1. Commit:
+   - `f531ea7`
+   - `Refine commands panel and add AI context hub`
+2. Push:
+   - `main` ya está actualizado en `origin`
+
+### Archivos principales tocados en esta sesión
+- `client/src/App.jsx`
+- `client/src/components/layout/Sidebar.jsx`
+- `client/src/pages/Commands.jsx`
+- `client/src/pages/AI.jsx`
+- `client/src/pages/Settings.jsx`
+- `client/src/index.css`
+- `server/db.js`
+- `server/index.js`
+- `server/routes/leads.js`
+- `server/routes/ai.js`
+- `server/services/aiContextDocuments.js`
+- `server/services/chatbot/flowEngine.js`
+- `server/services/ocr.js`
+- `client/dist/*`
+- `HANDOFF.md`
+
 ## Estado actual: 2026-04-11 — SESIÓN 27 (completada)
 
 ### Resumen

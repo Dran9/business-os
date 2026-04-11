@@ -689,6 +689,17 @@ function FlowEditor({
                   onMoveUp={() => onMoveNode(n.id, 'up')}
                   onMoveDown={() => onMoveNode(n.id, 'down')}
                 />
+                <div className="fnl-card-save-row">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={onSaveAll}
+                    disabled={savingAll || dirtyCount === 0}
+                  >
+                    <Icon name="save" size={13} />
+                    {savingAll ? 'Guardando...' : dirtyCount > 0 ? `Guardar todo (${dirtyCount})` : 'Guardar todo'}
+                  </button>
+                </div>
                 {i < nodes.length - 1 ? <div className="fnl-connector" /> : null}
               </div>
             ))

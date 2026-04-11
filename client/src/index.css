@@ -1229,6 +1229,14 @@ body {
   border-color: var(--color-warning);
 }
 
+.fnl-card-save-row {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--space-2);
+}
+
 .fnl-card-header {
   display: flex;
   align-items: center;

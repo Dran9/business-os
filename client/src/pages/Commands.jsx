@@ -28,41 +28,40 @@ const ACTIONS = [
     label: 'Reanudar bot',
     icon: 'zap',
     tone: 'primary',
-    description: 'Reactiva la conversación y devuelve el control al bot.',
+    description: 'Devuelve la conversación al flujo automático.',
   },
   {
     id: 'stop-bot',
     label: 'Detener bot',
     icon: 'x',
     tone: 'danger',
-    description: 'Escala la conversación y evita que el bot siga respondiendo.',
+    description: 'Escala la conversación y corta nuevas respuestas del bot.',
   },
   {
     id: 'send-qr',
     label: 'Mandar QR',
     icon: 'qr',
     tone: 'secondary',
-    description: 'Reenvía el QR de pago de la inscripción elegida.',
+    description: 'Reenvía el QR de pago de la inscripción activa.',
   },
   {
     id: 'payment-reminder',
     label: 'Recordar pago',
     icon: 'dollar-sign',
     tone: 'secondary',
-    description: 'Reenvía las instrucciones de pago al lead.',
+    description: 'Vuelve a mandar las instrucciones de cobro.',
   },
   {
     id: 'practical-info',
     label: 'Datos prácticos',
     icon: 'message-circle',
     tone: 'secondary',
-    description: 'Envía un mensaje operativo usando variables del taller y del lead.',
+    description: 'Envía ubicación, fecha y demás datos usando variables.',
   },
 ]
 
 function initialQuickSettings() {
   return {
-    global_open_question_context: '',
     practical_info_template: '',
     text_buffer_idle_ms: 4000,
     text_buffer_max_messages: 5,
@@ -118,12 +117,14 @@ export default function Commands() {
   const deferredQuery = useDeferredValue(query.trim())
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
+  const [recentLeads, setRecentLeads] = useState([])
+  const [loadingRecent, setLoadingRecent] = useState(true)
   const [selectedLead, setSelectedLead] = useState(null)
   const [loadingLead, setLoadingLead] = useState(false)
   const [activeAction, setActiveAction] = useState(null)
   const [actionLoading, setActionLoading] = useState('')
   const [actionResult, setActionResult] = useState(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(true)
   const [quickSettings, setQuickSettings] = useState(initialQuickSettings())
   const [settingsDirty, setSettingsDirty] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -135,10 +136,40 @@ export default function Commands() {
     () => (selectedLead?.conversations || []).find((item) => String(item.id) === String(selectedConversationId)) || null,
     [selectedConversationId, selectedLead?.conversations]
   )
+
   const currentEnrollment = useMemo(
     () => (selectedLead?.enrollments || []).find((item) => String(item.id) === String(selectedEnrollmentId)) || null,
     [selectedEnrollmentId, selectedLead?.enrollments]
   )
+
+  const loadQuickSettings = useCallback(async () => {
+    try {
+      const settings = await apiGet('/api/ai/settings')
+      setQuickSettings((current) => ({
+        ...current,
+        practical_info_template: settings.practical_info_template || '',
+        text_buffer_idle_ms: settings.text_buffer_idle_ms ?? current.text_buffer_idle_ms,
+        text_buffer_max_messages: settings.text_buffer_max_messages ?? current.text_buffer_max_messages,
+        text_buffer_max_window_ms: settings.text_buffer_max_window_ms ?? current.text_buffer_max_window_ms,
+      }))
+      setSettingsDirty(false)
+      setPracticalDraft((current) => current || settings.practical_info_template || '')
+    } catch {
+      // El módulo sigue siendo usable aunque no refresque la configuración global
+    }
+  }, [])
+
+  const loadRecentLeads = useCallback(async () => {
+    setLoadingRecent(true)
+    try {
+      const response = await apiGet('/api/leads?view=commands_recent&limit=4')
+      setRecentLeads(response.data || [])
+    } catch {
+      setRecentLeads([])
+    } finally {
+      setLoadingRecent(false)
+    }
+  }, [])
 
   const applyLeadDetail = useCallback((detail) => {
     const nextConversation = (
@@ -167,26 +198,20 @@ export default function Commands() {
       applyLeadDetail(detail)
       setPracticalDraft((current) => current || quickSettings.practical_info_template || '')
     } catch (err) {
-      alert(err.message)
+      setActionResult({
+        success: false,
+        title: 'No se pudo cargar el lead',
+        detail: err.message,
+      })
     } finally {
       setLoadingLead(false)
     }
   }, [applyLeadDetail, quickSettings.practical_info_template])
 
-  const loadQuickSettings = useCallback(async () => {
-    try {
-      const settings = await apiGet('/api/settings/llm')
-      setQuickSettings(settings)
-      setSettingsDirty(false)
-      setPracticalDraft((current) => current || settings.practical_info_template || '')
-    } catch {
-      // Silencio: el panel sigue siendo usable sin refrescar config
-    }
-  }, [])
-
   useEffect(() => {
     loadQuickSettings()
-  }, [loadQuickSettings])
+    loadRecentLeads()
+  }, [loadQuickSettings, loadRecentLeads])
 
   useEffect(() => {
     if (deferredQuery.length < 2) {
@@ -203,14 +228,10 @@ export default function Commands() {
         if (!cancelled) {
           setResults(response.data || [])
         }
-      } catch (err) {
-        if (!cancelled) {
-          setResults([])
-        }
+      } catch {
+        if (!cancelled) setResults([])
       } finally {
-        if (!cancelled) {
-          setSearching(false)
-        }
+        if (!cancelled) setSearching(false)
       }
     }, 220)
 
@@ -222,17 +243,19 @@ export default function Commands() {
 
   useAdminEvents({
     'lead:change': (payload) => {
+      loadRecentLeads()
       if (selectedLead?.id && Number(payload?.id) === Number(selectedLead.id)) {
         loadLeadDetail(selectedLead.id)
       }
     },
     'conversation:change': (payload) => {
+      loadRecentLeads()
       const hasConversation = (selectedLead?.conversations || []).some((item) => Number(item.id) === Number(payload?.id))
       if (selectedLead?.id && hasConversation) {
         loadLeadDetail(selectedLead.id)
       }
     },
-  }, Boolean(selectedLead?.id))
+  }, true)
 
   function handleSelectLead(leadRow) {
     setActionResult(null)
@@ -258,79 +281,80 @@ export default function Commands() {
     setActionResult(null)
 
     try {
-      if (actionId === 'resume-bot') {
-        if (!selectedConversationId) {
-          throw new Error('Este lead no tiene conversación para reanudar')
+      switch (actionId) {
+        case 'resume-bot': {
+          if (!selectedConversationId) throw new Error('Este lead no tiene conversación para reanudar')
+          const response = await apiPost(`/api/conversations/${selectedConversationId}/resume-bot`, { node_key: null })
+          setActionResult({
+            success: true,
+            title: 'Bot reanudado',
+            detail: response.responses_sent > 0
+              ? `Se reenviaron ${response.responses_sent} mensaje(s) desde ${response.resumed_node_name || response.resumed_node_key}.`
+              : 'La conversación volvió a quedar en manos del bot.',
+          })
+          break
         }
-        const response = await apiPost(`/api/conversations/${selectedConversationId}/resume-bot`, { node_key: null })
-        setActionResult({
-          success: true,
-          title: 'Bot reanudado',
-          detail: response.responses_sent > 0
-            ? `Se reenviaron ${response.responses_sent} mensaje(s) desde ${response.resumed_node_name || response.resumed_node_key}.`
-            : 'La conversación volvió a quedar en manos del bot.',
-        })
+
+        case 'stop-bot': {
+          if (!selectedConversationId) throw new Error('Este lead no tiene conversación para pausar')
+          await apiPost(`/api/conversations/${selectedConversationId}/stop-bot`, {})
+          setActionResult({
+            success: true,
+            title: 'Bot detenido',
+            detail: 'La conversación quedó escalada para atención manual.',
+          })
+          break
+        }
+
+        case 'send-qr': {
+          if (!selectedEnrollmentId) throw new Error('No hay inscripción disponible para reenviar QR')
+          const response = await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-qr`, {})
+          setActionResult({
+            success: true,
+            title: 'QR reenviado',
+            detail: response?.result?.amount
+              ? `Se reenviaron datos de cobro por ${formatCurrency(response.result.amount)}.`
+              : 'El QR salió nuevamente por el canal del lead.',
+          })
+          break
+        }
+
+        case 'payment-reminder': {
+          if (!selectedEnrollmentId) throw new Error('No hay inscripción disponible para recordar el pago')
+          await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-instructions`, {})
+          setActionResult({
+            success: true,
+            title: 'Recordatorio enviado',
+            detail: 'Se reenviaron las instrucciones de pago del taller.',
+          })
+          break
+        }
+
+        case 'practical-info': {
+          if (!selectedConversationId) throw new Error('Este lead no tiene conversación para enviar datos prácticos')
+          if (!practicalDraft.trim()) throw new Error('Escribe un template de datos prácticos antes de enviar')
+          const response = await apiPost(`/api/conversations/${selectedConversationId}/send-practical-info`, {
+            enrollment_id: selectedEnrollmentId || null,
+            template: practicalDraft,
+          })
+          setActionResult({
+            success: true,
+            title: 'Datos prácticos enviados',
+            detail: response.workshop_name
+              ? `Mensaje enviado usando datos de ${response.workshop_name}.`
+              : 'Mensaje operativo enviado correctamente.',
+          })
+          break
+        }
+
+        default:
+          break
       }
 
-      if (actionId === 'stop-bot') {
-        if (!selectedConversationId) {
-          throw new Error('Este lead no tiene conversación para pausar')
-        }
-        await apiPost(`/api/conversations/${selectedConversationId}/stop-bot`, {})
-        setActionResult({
-          success: true,
-          title: 'Bot detenido',
-          detail: 'La conversación quedó escalada para atención manual.',
-        })
-      }
-
-      if (actionId === 'send-qr') {
-        if (!selectedEnrollmentId) {
-          throw new Error('No hay inscripción disponible para reenviar QR')
-        }
-        const response = await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-qr`, {})
-        setActionResult({
-          success: true,
-          title: 'QR reenviado',
-          detail: response?.result?.amount
-            ? `Se reenviaron datos de cobro por ${formatCurrency(response.result.amount)}.`
-            : 'El QR salió nuevamente por el canal del lead.',
-        })
-      }
-
-      if (actionId === 'payment-reminder') {
-        if (!selectedEnrollmentId) {
-          throw new Error('No hay inscripción disponible para recordar el pago')
-        }
-        await apiPost(`/api/enrollments/${selectedEnrollmentId}/resend-instructions`, {})
-        setActionResult({
-          success: true,
-          title: 'Recordatorio enviado',
-          detail: 'Se reenviaron las instrucciones de pago del taller.',
-        })
-      }
-
-      if (actionId === 'practical-info') {
-        if (!selectedConversationId) {
-          throw new Error('Este lead no tiene conversación para enviar datos prácticos')
-        }
-        if (!practicalDraft.trim()) {
-          throw new Error('Escribe un template de datos prácticos antes de enviar')
-        }
-        const response = await apiPost(`/api/conversations/${selectedConversationId}/send-practical-info`, {
-          enrollment_id: selectedEnrollmentId || null,
-          template: practicalDraft,
-        })
-        setActionResult({
-          success: true,
-          title: 'Datos prácticos enviados',
-          detail: response.workshop_name
-            ? `Mensaje enviado usando datos de ${response.workshop_name}.`
-            : 'Mensaje operativo enviado correctamente.',
-        })
-      }
-
-      await loadLeadDetail(selectedLead.id)
+      await Promise.all([
+        loadLeadDetail(selectedLead.id),
+        loadRecentLeads(),
+      ])
     } catch (err) {
       setActionResult({
         success: false,
@@ -351,14 +375,20 @@ export default function Commands() {
         text_buffer_max_messages: Number(quickSettings.text_buffer_max_messages),
         text_buffer_max_window_ms: Number(quickSettings.text_buffer_max_window_ms),
       }
-      const updated = await apiPut('/api/settings/llm', payload)
-      setQuickSettings(updated)
-      setSettingsDirty(false)
+      const updated = await apiPut('/api/ai/settings', payload)
+      setQuickSettings((current) => ({
+        ...current,
+        practical_info_template: updated.practical_info_template || '',
+        text_buffer_idle_ms: updated.text_buffer_idle_ms,
+        text_buffer_max_messages: updated.text_buffer_max_messages,
+        text_buffer_max_window_ms: updated.text_buffer_max_window_ms,
+      }))
       setPracticalDraft(updated.practical_info_template || '')
+      setSettingsDirty(false)
       setActionResult({
         success: true,
         title: 'Ajustes guardados',
-        detail: 'El panel ya usa los nuevos tiempos y template práctico.',
+        detail: 'Los cambios ya aplican al buffer del bot y al template práctico.',
       })
     } catch (err) {
       setActionResult({
@@ -381,94 +411,111 @@ export default function Commands() {
 
   const leadHeaderConversation = currentConversation || pickPreferredConversation(selectedLead?.conversations || [])
   const leadHeaderEnrollment = currentEnrollment || pickPreferredEnrollment(selectedLead?.enrollments || [])
+  const discoveryItems = deferredQuery.length >= 2 ? results : recentLeads
 
   return (
     <div className="commands-shell">
-      <div className="commands-head">
-        <div>
+      <section className="commands-hero">
+        <div className="commands-hero-copy">
+          <div className="commands-kicker">Panel táctico</div>
           <h1 className="page-title">Comandos</h1>
-          <div className="text-muted">
-            Acciones rápidas sobre leads, conversación y cobro sin entrar a varios módulos.
-          </div>
-        </div>
-      </div>
-
-      <div className="card mt-4">
-        <div className="commands-search-row">
-          <div className="commands-search-input-wrap">
-            <Icon name="message-circle" size={18} />
-            <input
-              className="input commands-search-input"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Buscar lead por nombre o celular..."
-            />
-          </div>
-          {selectedLead ? (
-            <button type="button" className="btn btn-ghost" onClick={clearLead}>
-              Limpiar
-            </button>
-          ) : null}
+          <p className="text-secondary">
+            Atajos operativos para actuar en segundos sobre los leads activos, sin entrar al inbox ni al embudo.
+          </p>
         </div>
 
-        {searching ? (
-          <div className="text-muted text-sm mt-4">Buscando leads...</div>
-        ) : null}
+        <div className="commands-hero-stats">
+          <StatCard label="Recientes" value={String(recentLeads.length)} tone="primary" />
+          <StatCard label="Lead activo" value={selectedLead?.name ? '1' : '0'} tone="neutral" />
+          <StatCard label="Buffer" value={`${quickSettings.text_buffer_idle_ms} ms`} tone="success" />
+        </div>
+      </section>
 
-        {!searching && query.trim().length >= 2 && results.length === 0 ? (
-          <div className="text-muted text-sm mt-4">No se encontraron leads.</div>
-        ) : null}
-
-        {!selectedLead && results.length > 0 ? (
-          <div className="commands-result-list mt-4">
-            {results.map((lead) => (
-              <button
-                key={lead.id}
-                type="button"
-                className="commands-result-row"
-                onClick={() => handleSelectLead(lead)}
-              >
-                <div>
-                  <div className="font-semibold">{lead.name || 'Sin nombre'}</div>
-                  <div className="text-sm text-secondary">{lead.phone || 'Sin celular'} · {lead.city || 'Sin ciudad'}</div>
-                </div>
-                <div className={getLeadBadgeClass(lead.status)}>
-                  {LEAD_STATUS_LABELS[lead.status] || lead.status || 'Lead'}
-                </div>
+      <div className="commands-top-grid mt-4">
+        <section className="card commands-discovery-card">
+          <div className="commands-search-row">
+            <div className="commands-search-input-wrap">
+              <Icon name="command" size={18} />
+              <input
+                className="input commands-search-input"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Buscar lead por nombre o celular..."
+              />
+            </div>
+            {selectedLead ? (
+              <button type="button" className="btn btn-ghost" onClick={clearLead}>
+                Limpiar
               </button>
-            ))}
+            ) : null}
           </div>
-        ) : null}
-      </div>
 
-      {loadingLead ? (
-        <div className="card mt-4 text-muted">Cargando ficha del lead...</div>
-      ) : null}
+          <div className="commands-section-head mt-4">
+            <div>
+              <h2 className="card-title">{deferredQuery.length >= 2 ? 'Resultados' : 'Leads recientes'}</h2>
+              <div className="text-muted text-sm">
+                {deferredQuery.length >= 2
+                  ? 'Búsqueda instantánea por lead.'
+                  : 'Siempre muestra hasta 4 leads con interacción reciente, excluyendo compras confirmadas.'}
+              </div>
+            </div>
+            {!deferredQuery.length ? (
+              <span className="badge badge-info">Ahora</span>
+            ) : null}
+          </div>
 
-      {selectedLead ? (
-        <div className="commands-layout mt-4">
-          <div className="commands-main">
-            <div className="card">
-              <div className="card-header">
-                <div>
-                  <h2 className="card-title">{selectedLead.name || 'Sin nombre'}</h2>
-                  <div className="text-sm text-muted">
+          {searching || loadingRecent ? (
+            <div className="text-muted text-sm mt-4">Cargando leads...</div>
+          ) : null}
+
+          {!searching && deferredQuery.length >= 2 && results.length === 0 ? (
+            <div className="commands-empty-block mt-4">No se encontraron leads con esa búsqueda.</div>
+          ) : null}
+
+          {!loadingRecent && deferredQuery.length < 2 && recentLeads.length === 0 ? (
+            <div className="commands-empty-block mt-4">Todavía no hay leads recientes para accionar.</div>
+          ) : null}
+
+          {discoveryItems.length > 0 ? (
+            <div className="commands-lead-grid mt-4">
+              {discoveryItems.map((lead) => (
+                <LeadCard
+                  key={lead.id}
+                  lead={lead}
+                  active={Number(lead.id) === Number(selectedLead?.id)}
+                  onClick={() => handleSelectLead(lead)}
+                />
+              ))}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="card commands-focus-card">
+          {loadingLead ? (
+            <div className="commands-empty-block">Cargando ficha del lead...</div>
+          ) : selectedLead ? (
+            <>
+              <div className="commands-focus-hero">
+                <div className="commands-focus-avatar">{buildInitials(selectedLead.name)}</div>
+                <div className="commands-focus-copy">
+                  <div className="commands-focus-name">{selectedLead.name || 'Sin nombre'}</div>
+                  <div className="text-secondary">
                     {selectedLead.phone || 'Sin celular'} · {selectedLead.city || 'Sin ciudad'} · {selectedLead.source || 'Sin fuente'}
                   </div>
-                </div>
-                <div className="commands-chip-wrap">
-                  <span className={getLeadBadgeClass(selectedLead.status)}>
-                    {LEAD_STATUS_LABELS[selectedLead.status] || selectedLead.status || 'Lead'}
-                  </span>
-                  {leadHeaderConversation ? (
-                    <span className={getConversationBadgeClass(leadHeaderConversation.status)}>
-                      {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status}
+                  <div className="commands-chip-wrap mt-3">
+                    <span className={getLeadBadgeClass(selectedLead.status)}>
+                      {LEAD_STATUS_LABELS[selectedLead.status] || selectedLead.status || 'Lead'}
                     </span>
-                  ) : null}
+                    {leadHeaderConversation ? (
+                      <span className={getConversationBadgeClass(leadHeaderConversation.status)}>
+                        {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
-              <div className="lead-summary-grid">
+              <div className="lead-summary-grid mt-4">
                 <LeadMeta label="Último contacto" value={selectedLead.last_contact_at ? timeAgo(selectedLead.last_contact_at) : '—'} />
                 <LeadMeta label="Conversaciones" value={String(selectedLead.conversations?.length || 0)} />
                 <LeadMeta label="Inscripciones" value={String(selectedLead.enrollments?.length || 0)} />
@@ -477,7 +524,7 @@ export default function Commands() {
 
               <div className="commands-context-grid mt-4">
                 <div className="commands-context-card">
-                  <div className="commands-context-title">Conversación activa</div>
+                  <div className="commands-context-title">Conversación útil</div>
                   {leadHeaderConversation ? (
                     <>
                       <div className="font-semibold mt-1">{leadHeaderConversation.workshop_name || 'Sin taller'}</div>
@@ -489,7 +536,7 @@ export default function Commands() {
                       </div>
                     </>
                   ) : (
-                    <div className="text-sm text-muted mt-1">Este lead todavía no tiene conversación vinculada.</div>
+                    <div className="text-sm text-muted mt-1">Todavía no tiene conversación vinculada.</div>
                   )}
                 </div>
 
@@ -513,149 +560,168 @@ export default function Commands() {
                   )}
                 </div>
               </div>
+            </>
+          ) : (
+            <div className="commands-empty-block">
+              Selecciona uno de los leads recientes o usa el buscador para abrir su panel de acción inmediata.
             </div>
+          )}
+        </section>
+      </div>
 
-            <div className="card mt-4">
-              <div className="card-header">
-                <h2 className="card-title">Acciones rápidas</h2>
-              </div>
-
-              <div className="commands-actions-grid">
-                {ACTIONS.map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    className={getActionButtonClass(action.tone, activeAction === action.id)}
-                    onClick={() => setActiveAction((current) => current === action.id ? null : action.id)}
-                  >
-                    <Icon name={action.icon} size={18} />
-                    <span>{action.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {activeAction ? (
-                <div className="commands-action-panel">
-                  <ActionPanel
-                    actionId={activeAction}
-                    currentConversation={currentConversation}
-                    currentEnrollment={currentEnrollment}
-                    conversations={selectedLead.conversations || []}
-                    enrollments={selectedLead.enrollments || []}
-                    selectedConversationId={selectedConversationId}
-                    setSelectedConversationId={setSelectedConversationId}
-                    selectedEnrollmentId={selectedEnrollmentId}
-                    setSelectedEnrollmentId={setSelectedEnrollmentId}
-                    practicalDraft={practicalDraft}
-                    setPracticalDraft={setPracticalDraft}
-                    quickSettings={quickSettings}
-                    actionLoading={actionLoading}
-                    onExecute={executeAction}
-                  />
-                </div>
-              ) : (
-                <div className="text-sm text-muted mt-4">
-                  Elige una acción para abrir su panel contextual.
-                </div>
-              )}
-            </div>
-
-            {actionResult ? (
-              <div className={`inline-notice mt-4 ${actionResult.success ? 'inline-notice-success' : 'inline-notice-warning'}`}>
-                <div className="font-semibold">{actionResult.title}</div>
-                {actionResult.detail ? <div className="text-sm mt-1">{actionResult.detail}</div> : null}
-              </div>
-            ) : null}
+      <section className="card mt-4">
+        <div className="card-header">
+          <div>
+            <h2 className="card-title">Acciones rápidas</h2>
+            <div className="text-muted text-sm">Cada acción toma el lead seleccionado como contexto.</div>
           </div>
+        </div>
 
-          <div className="commands-side">
-            <div className="card">
-              <button
-                type="button"
-                className="commands-settings-toggle"
-                onClick={() => setSettingsOpen((current) => !current)}
+        <div className="commands-actions-grid">
+          {ACTIONS.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              className={getActionButtonClass(action.tone, activeAction === action.id)}
+              onClick={() => setActiveAction((current) => current === action.id ? null : action.id)}
+              disabled={!selectedLead}
+            >
+              <span className="commands-action-icon">
+                <Icon name={action.icon} size={18} />
+              </span>
+              <span>{action.label}</span>
+              <small>{action.description}</small>
+            </button>
+          ))}
+        </div>
+
+        {selectedLead && activeAction ? (
+          <div className="commands-action-panel">
+            <ActionPanel
+              actionId={activeAction}
+              currentConversation={currentConversation}
+              currentEnrollment={currentEnrollment}
+              conversations={selectedLead.conversations || []}
+              enrollments={selectedLead.enrollments || []}
+              selectedConversationId={selectedConversationId}
+              setSelectedConversationId={setSelectedConversationId}
+              selectedEnrollmentId={selectedEnrollmentId}
+              setSelectedEnrollmentId={setSelectedEnrollmentId}
+              practicalDraft={practicalDraft}
+              setPracticalDraft={setPracticalDraft}
+              quickSettings={quickSettings}
+              actionLoading={actionLoading}
+              onExecute={executeAction}
+            />
+          </div>
+        ) : null}
+
+        {!selectedLead ? (
+          <div className="text-sm text-muted mt-4">Necesitas elegir un lead para activar estos comandos.</div>
+        ) : null}
+      </section>
+
+      <section className="card mt-4 commands-quick-card">
+        <button
+          type="button"
+          className="commands-quick-header"
+          onClick={() => setSettingsOpen((current) => !current)}
+        >
+          <div>
+            <h2 className="card-title">Ajustes rápidos</h2>
+            <div className="text-muted text-sm">Son globales para toda la app, no para un lead puntual.</div>
+          </div>
+          <div className="commands-quick-summary">
+            <span className="commands-summary-pill">{quickSettings.text_buffer_idle_ms} ms</span>
+            <span className="commands-summary-pill">{quickSettings.text_buffer_max_messages} msgs</span>
+            <span className="commands-summary-pill">{quickSettings.text_buffer_max_window_ms} ms</span>
+          </div>
+        </button>
+
+        {settingsOpen ? (
+          <div className="commands-quick-body">
+            <div className="commands-quick-grid">
+              <QuickSettingCard
+                title="Pausa mínima"
+                description="Espera antes de responder cuando el lead sigue escribiendo."
+                value={quickSettings.text_buffer_idle_ms}
+                suffix="ms"
               >
-                <span className="font-semibold">Ajustes rápidos</span>
-                <span className="text-muted text-sm">{settingsOpen ? 'Ocultar' : 'Abrir'}</span>
+                <input
+                  className="input"
+                  type="number"
+                  min="500"
+                  step="100"
+                  value={quickSettings.text_buffer_idle_ms}
+                  onChange={(event) => updateQuickSetting('text_buffer_idle_ms', event.target.value)}
+                />
+              </QuickSettingCard>
+
+              <QuickSettingCard
+                title="Mensajes agrupados"
+                description="Cantidad máxima de mensajes que se fusionan antes de disparar respuesta."
+                value={quickSettings.text_buffer_max_messages}
+                suffix="msgs"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={quickSettings.text_buffer_max_messages}
+                  onChange={(event) => updateQuickSetting('text_buffer_max_messages', event.target.value)}
+                />
+              </QuickSettingCard>
+
+              <QuickSettingCard
+                title="Ventana máxima"
+                description="Tiempo total de espera acumulado antes de responder sí o sí."
+                value={quickSettings.text_buffer_max_window_ms}
+                suffix="ms"
+              >
+                <input
+                  className="input"
+                  type="number"
+                  min="1000"
+                  step="500"
+                  value={quickSettings.text_buffer_max_window_ms}
+                  onChange={(event) => updateQuickSetting('text_buffer_max_window_ms', event.target.value)}
+                />
+              </QuickSettingCard>
+            </div>
+
+            <div className="form-group mt-4">
+              <label>Template de datos prácticos</label>
+              <textarea
+                className="input textarea"
+                rows={10}
+                value={quickSettings.practical_info_template}
+                onChange={(event) => updateQuickSetting('practical_info_template', event.target.value)}
+              />
+            </div>
+
+            <div className="text-muted text-sm">
+              Variables disponibles: [NOMBRE], [NOMBRE_COMPLETO], [CELULAR], [TALLER], [FECHA], [HORA_INICIO], [HORA_FIN], [VENUE], [VENUE_DIRECCION], [MODALIDAD], [MONTO], [PRECIO], [PRECIO_NORMAL], [PRECIO_EARLY_BIRD], [PRECIO_GRUPAL].
+            </div>
+
+            <div className="commands-quick-footer mt-4">
+              <button type="button" className="btn btn-primary" onClick={saveQuickSettings} disabled={settingsSaving}>
+                {settingsSaving ? 'Guardando...' : 'Guardar ajustes rápidos'}
               </button>
-
-              {settingsOpen ? (
-                <div className="commands-settings-body">
-                  <div className="form-group">
-                    <label>Buffer: pausa mínima antes de responder (ms)</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min="500"
-                      step="100"
-                      value={quickSettings.text_buffer_idle_ms}
-                      onChange={(event) => updateQuickSetting('text_buffer_idle_ms', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Buffer: máximo de mensajes agrupados</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={quickSettings.text_buffer_max_messages}
-                      onChange={(event) => updateQuickSetting('text_buffer_max_messages', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Buffer: ventana máxima acumulada (ms)</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min="1000"
-                      step="500"
-                      value={quickSettings.text_buffer_max_window_ms}
-                      onChange={(event) => updateQuickSetting('text_buffer_max_window_ms', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Template de datos prácticos</label>
-                    <textarea
-                      className="input textarea"
-                      rows={12}
-                      value={quickSettings.practical_info_template}
-                      onChange={(event) => updateQuickSetting('practical_info_template', event.target.value)}
-                    />
-                  </div>
-
-                  <div className="text-muted text-sm">
-                    Variables disponibles: [NOMBRE], [NOMBRE_COMPLETO], [CELULAR], [TALLER], [FECHA], [HORA_INICIO], [HORA_FIN], [VENUE], [VENUE_DIRECCION], [MODALIDAD], [MONTO], [PRECIO], [PRECIO_NORMAL], [PRECIO_EARLY_BIRD], [PRECIO_GRUPAL].
-                  </div>
-
-                  <button type="button" className="btn btn-primary mt-4" onClick={saveQuickSettings} disabled={settingsSaving}>
-                    {settingsSaving ? 'Guardando...' : 'Guardar ajustes rápidos'}
-                  </button>
-
-                  <div className="mt-4">
-                    {settingsSaving ? (
-                      <span className="badge badge-info">Guardando...</span>
-                    ) : settingsDirty ? (
-                      <span className="badge badge-warning">Hay cambios sin guardar</span>
-                    ) : (
-                      <span className="badge badge-success">Sin cambios pendientes</span>
-                    )}
-                  </div>
-                </div>
-              ) : null}
+              <span className={`badge ${settingsDirty ? 'badge-warning' : 'badge-success'}`}>
+                {settingsDirty ? 'Hay cambios sin guardar' : 'Sin cambios pendientes'}
+              </span>
             </div>
           </div>
+        ) : null}
+      </section>
+
+      {actionResult ? (
+        <div className={`inline-notice mt-4 ${actionResult.success ? 'inline-notice-success' : 'inline-notice-warning'}`}>
+          <div className="font-semibold">{actionResult.title}</div>
+          {actionResult.detail ? <div className="text-sm mt-1">{actionResult.detail}</div> : null}
         </div>
-      ) : (
-        <div className="card mt-4">
-          <div className="commands-empty">
-            Busca un lead y abre acciones rápidas para reanudar bot, detenerlo, reenviar QR, recordar pago o mandar datos prácticos.
-          </div>
-        </div>
-      )}
+      ) : null}
     </div>
   )
 }
@@ -761,6 +827,55 @@ function ActionPanel({
   )
 }
 
+function LeadCard({ lead, active, onClick }) {
+  return (
+    <button type="button" className={`commands-lead-card ${active ? 'active' : ''}`} onClick={onClick}>
+      <div className="commands-lead-card-top">
+        <div className="commands-lead-avatar">{buildInitials(lead.name)}</div>
+        <div className="commands-lead-meta">
+          <div className="font-semibold">{lead.name || 'Sin nombre'}</div>
+          <div className="text-sm text-secondary">{lead.phone || 'Sin celular'}</div>
+        </div>
+      </div>
+
+      <div className="commands-lead-card-bottom">
+        <span className={getLeadBadgeClass(lead.status)}>
+          {LEAD_STATUS_LABELS[lead.status] || lead.status || 'Lead'}
+        </span>
+        <span className="text-xs text-muted">
+          {lead.last_contact_at ? timeAgo(lead.last_contact_at) : 'sin interacción'}
+        </span>
+      </div>
+    </button>
+  )
+}
+
+function QuickSettingCard({ title, description, value, suffix, children }) {
+  return (
+    <div className="commands-setting-card">
+      <div className="commands-setting-top">
+        <div>
+          <div className="font-semibold">{title}</div>
+          <div className="text-sm text-secondary mt-1">{description}</div>
+        </div>
+        <div className="commands-setting-value">
+          {value}{suffix ? ` ${suffix}` : ''}
+        </div>
+      </div>
+      <div className="mt-3">{children}</div>
+    </div>
+  )
+}
+
+function StatCard({ label, value, tone }) {
+  return (
+    <div className={`commands-stat-card ${tone || 'neutral'}`}>
+      <div className="text-xs text-muted">{label}</div>
+      <div className="commands-stat-value">{value}</div>
+    </div>
+  )
+}
+
 function LeadMeta({ label, value }) {
   return (
     <div className="lead-meta-card">
@@ -768,4 +883,11 @@ function LeadMeta({ label, value }) {
       <div className="font-semibold mt-1">{value}</div>
     </div>
   )
+}
+
+function buildInitials(name) {
+  const normalized = String(name || '').trim()
+  if (!normalized) return 'LD'
+  const parts = normalized.split(/\s+/).slice(0, 2)
+  return parts.map((part) => part[0]?.toUpperCase() || '').join('')
 }

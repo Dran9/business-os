@@ -13,6 +13,24 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
     let sql = 'SELECT * FROM leads WHERE tenant_id = ? AND deleted_at IS NULL';
     const params = [req.tenantId];
 
+    if (view === 'commands_recent') {
+      sql = `
+        SELECT l.*
+        FROM leads l
+        WHERE l.tenant_id = ?
+          AND l.deleted_at IS NULL
+          AND l.last_contact_at IS NOT NULL
+          AND l.status NOT IN ('converted', 'lost')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM enrollments e
+            WHERE e.tenant_id = l.tenant_id
+              AND e.lead_id = l.id
+              AND (e.payment_status = 'paid' OR e.status = 'confirmed')
+          )
+      `;
+    }
+
     if (status) {
       sql += ' AND status = ?';
       params.push(status);
@@ -38,7 +56,11 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
       sql += ' AND agenda_client_id IS NULL';
     }
 
-    sql += ' ORDER BY last_contact_at DESC';
+    if (view === 'commands_recent') {
+      sql += ' ORDER BY l.last_contact_at DESC, l.id DESC';
+    } else {
+      sql += ' ORDER BY last_contact_at DESC';
+    }
 
     const result = await queryPaginated(sql, params, { page: Number(page), limit: Number(limit) });
     res.json(result);

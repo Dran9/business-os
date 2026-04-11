@@ -17,6 +17,7 @@ const {
   getLlmSettings,
   normalizeTextBufferSettings,
 } = require('../llmSettings');
+const { getActiveAiDocumentsContext } = require('../aiContextDocuments');
 const TelegramAdapter = require('../channels/telegram');
 const WhatsAppAdapter = require('../channels/whatsapp');
 
@@ -1363,10 +1364,14 @@ async function runFlowEngine({
         await applyLeadQualifyingUpdate({ tenantId: tenant_id, leadId: lead.id, messageText: message_text });
       }
 
-      const [tenant, workshop, rawRecentMessages] = await Promise.all([
+      const [tenant, workshop, rawRecentMessages, aiDocumentContext] = await Promise.all([
         getTenantById(tenant_id),
         getLatestWorkshop(tenant_id),
         getRecentLeadMessages(tenant_id, lead?.id, 4),
+        getActiveAiDocumentsContext(tenant_id).catch((err) => {
+          console.error('[FlowEngine] AI context docs error:', err.message);
+          return '';
+        }),
       ]);
       const normalizedCurrentMessage = normalizeInternalWhitespace(message_text);
       let recentMessages = rawRecentMessages;
@@ -1388,6 +1393,7 @@ async function runFlowEngine({
           workshop,
           lead,
           conversation,
+          aiDocumentContext,
         }),
         userPrompt: buildAiUserPrompt({
           lead,
@@ -1708,7 +1714,7 @@ function resolveMessageText(messageText, context, workshop, lead = null, convers
   return formatMessageWithWorkshop(messageText, workshop, context, lead, conversation);
 }
 
-function buildAiSystemPrompt({ node, context, tenant, workshop, lead, conversation }) {
+function buildAiSystemPrompt({ node, context, tenant, workshop, lead, conversation, aiDocumentContext = '' }) {
   const sections = [];
   const globalContext = resolveMessageText(
     tenant?.llm_config?.global_open_question_context || '',
@@ -1724,6 +1730,10 @@ function buildAiSystemPrompt({ node, context, tenant, workshop, lead, conversati
 
   if (context.groq_context) {
     sections.push(`Contexto adicional sobre este contacto:\n${context.groq_context}`);
+  }
+
+  if (aiDocumentContext) {
+    sections.push(`Documentos activos para contexto de negocio:\n${aiDocumentContext}`);
   }
 
   const nodePrompt = resolveMessageText(

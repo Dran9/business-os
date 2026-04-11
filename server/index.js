@@ -90,6 +90,7 @@ app.use('/api/finance', require('./routes/finance'));
 app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/team', require('./routes/team'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/ai', require('./routes/ai'));
 app.use('/api/agenda', require('./routes/agenda'));
 // app.use('/api/playbooks', require('./routes/playbooks'));
 // app.use('/api/commands', require('./routes/commands'));

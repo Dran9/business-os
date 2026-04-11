@@ -31,12 +31,6 @@ function initialSecurityForm() {
   }
 }
 
-function initialLlmSettings() {
-  return {
-    global_open_question_context: '',
-  }
-}
-
 export default function Settings({ currentUser }) {
   const canManageTeam = ['owner', 'admin'].includes(currentUser?.role)
   const [team, setTeam] = useState([])
@@ -51,17 +45,13 @@ export default function Settings({ currentUser }) {
     payment_destination_accounts: [],
     payment_proof_debug_mode: false,
   })
-  const [llmSettings, setLlmSettings] = useState(initialLlmSettings())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingPayment, setSavingPayment] = useState(false)
-  const [savingLlm, setSavingLlm] = useState(false)
   const [savingProofDebugMode, setSavingProofDebugMode] = useState(false)
   const [savingSecurity, setSavingSecurity] = useState(false)
   const [paymentLoaded, setPaymentLoaded] = useState(false)
   const [paymentDirty, setPaymentDirty] = useState(false)
-  const [llmLoaded, setLlmLoaded] = useState(false)
-  const [llmDirty, setLlmDirty] = useState(false)
   const [notice, setNotice] = useState(null)
   const [form, setForm] = useState(initialCreateForm())
   const [securityForm, setSecurityForm] = useState(initialSecurityForm())
@@ -78,7 +68,6 @@ export default function Settings({ currentUser }) {
     try {
       const requests = [
         apiGet('/api/settings/payment-options').catch(() => null),
-        apiGet('/api/settings/llm').catch(() => null),
       ]
       if (canManageTeam) {
         requests.unshift(apiGet('/api/team').catch(() => []), apiGet('/api/team/activity?limit=40').catch(() => []))
@@ -86,29 +75,22 @@ export default function Settings({ currentUser }) {
 
       const results = await Promise.all(requests)
       if (canManageTeam) {
-        const [teamRows, activityRows, paymentData, llmData] = results
+        const [teamRows, activityRows, paymentData] = results
         setTeam(teamRows)
         setActivity(activityRows)
         if (paymentData && !paymentDirty) {
           setPaymentSettings(paymentData)
         }
-        if (llmData && !llmDirty) {
-          setLlmSettings(llmData)
-        }
       } else {
-        const [paymentData, llmData] = results
+        const [paymentData] = results
         setTeam([])
         setActivity([])
         if (paymentData && !paymentDirty) {
           setPaymentSettings(paymentData)
         }
-        if (llmData && !llmDirty) {
-          setLlmSettings(llmData)
-        }
       }
     } finally {
       setPaymentLoaded(true)
-      setLlmLoaded(true)
       setLoading(false)
     }
   }
@@ -125,11 +107,6 @@ export default function Settings({ currentUser }) {
 
   function markPaymentDirty() {
     setPaymentDirty(true)
-    setNotice(null)
-  }
-
-  function markLlmDirty() {
-    setLlmDirty(true)
     setNotice(null)
   }
 
@@ -185,21 +162,6 @@ export default function Settings({ currentUser }) {
       alert(err.message)
     } finally {
       setSavingProofDebugMode(false)
-    }
-  }
-
-  async function saveLlmSettings() {
-    setSavingLlm(true)
-    try {
-      const updated = await apiPut('/api/settings/llm', llmSettings)
-      setLlmSettings(updated)
-      setLlmDirty(false)
-      setLlmLoaded(true)
-      setNotice({ type: 'success', text: 'Contexto global de IA guardado correctamente.' })
-    } catch (err) {
-      alert(err.message)
-    } finally {
-      setSavingLlm(false)
     }
   }
 
@@ -547,53 +509,6 @@ export default function Settings({ currentUser }) {
           ) : paymentDirty ? (
             <span className="badge badge-warning">Hay cambios sin guardar</span>
           ) : paymentLoaded ? (
-            <span className="badge badge-success">Cambios guardados</span>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="card mt-4">
-        <div className="card-header">
-          <h2 className="card-title">Contexto global de IA</h2>
-        </div>
-        <p className="text-muted">
-          Este texto se inyecta automáticamente antes del <code>ai_system_prompt</code> de cada nodo <code>open_question_ai</code>.
-          No hace falta repetir quién sos, tu tono o las reglas base en cada card.
-        </p>
-
-        <div className="form-group mt-4">
-          <label>Contexto base</label>
-          <textarea
-            className="input textarea"
-            rows={10}
-            value={llmSettings.global_open_question_context}
-            onChange={(event) => {
-              setLlmSettings((current) => ({
-                ...current,
-                global_open_question_context: event.target.value,
-              }))
-              markLlmDirty()
-            }}
-            placeholder={'Ejemplo:\nSoy Daniel MacLean, psicólogo en Bolivia.\nResponde en español boliviano.\nTono cálido, profesional y concreto.\nNunca inventes datos, no prometas resultados ni ofrezcas cosas que no existen.\nSi falta un dato real del taller, dilo con honestidad.\nDatos del taller activo: fecha [FECHA], lugar [VENUE], horario [HORA_INICIO] a [HORA_FIN], precio normal [PRECIO_NORMAL], early bird [PRECIO_EARLY_BIRD].'}
-          />
-        </div>
-
-        <div className="text-muted text-sm mt-4">
-          Variables disponibles: [FECHA], [VENUE], [VENUE_DIRECCION], [HORA_INICIO], [HORA_FIN], [TALLER], [PRECIO], [PRECIO_NORMAL], [PRECIO_EARLY_BIRD], [PRECIO_GRUPAL], [MONTO], [NOMBRE], [NOMBRE_COMPLETO], [CELULAR].
-        </div>
-        <div className="text-muted text-sm mt-4">
-          Además, el bot inyecta automáticamente el historial reciente del lead antes de responder. El prompt de cada card queda solo para la instrucción específica de ese nodo.
-        </div>
-
-        <button type="button" className="btn btn-primary mt-4" disabled={savingLlm} onClick={saveLlmSettings}>
-          {savingLlm ? 'Guardando...' : 'Guardar contexto global de IA'}
-        </button>
-        <div className="mt-4">
-          {savingLlm ? (
-            <span className="badge badge-info">Guardando cambios...</span>
-          ) : llmDirty ? (
-            <span className="badge badge-warning">Hay cambios sin guardar</span>
-          ) : llmLoaded ? (
             <span className="badge badge-success">Cambios guardados</span>
           ) : null}
         </div>

@@ -201,4 +201,7 @@ function parseBolivianReceipt(text, options = {}) {
   };
 }
 
-module.exports = { extractReceiptData };
+module.exports = {
+  extractReceiptData,
+  extractPdfText,
+};

@@ -887,6 +887,24 @@ async function initializeDatabase() {
       )
     `);
 
+    // --- AI context documents ---
+    await conn.execute(`
+      CREATE TABLE IF NOT EXISTS ai_context_documents (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        tenant_id INT NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        mime_type VARCHAR(120) NOT NULL,
+        extracted_text MEDIUMTEXT NOT NULL,
+        char_count INT DEFAULT 0,
+        active BOOLEAN DEFAULT TRUE,
+        created_by VARCHAR(100),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_ai_context_docs_tenant (tenant_id, active, created_at),
+        FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+      )
+    `);
+
     // --- Seed default tenant (Daniel) ---
     const [tenants] = await conn.execute('SELECT id FROM tenants LIMIT 1');
     if (tenants.length === 0) {

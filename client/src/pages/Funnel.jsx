@@ -187,39 +187,20 @@ const ICONS = {
 }
 
 function IconConfirmButton({ onConfirm }) {
-  const [confirming, setConfirming] = useState(false)
-  const ref = useRef(null)
-
-  useEffect(() => {
-    if (!confirming) return undefined
-    function handleClickOutside(event) {
-      if (ref.current && !ref.current.contains(event.target)) {
-        setConfirming(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [confirming])
-
   function handleClick() {
-    if (confirming) {
-      setConfirming(false)
-      onConfirm()
-    } else {
-      setConfirming(true)
-    }
+    const confirmed = window.confirm('¿Eliminar este paso del embudo? Se borra de inmediato.')
+    if (!confirmed) return
+    onConfirm()
   }
 
   return (
     <button
-      ref={ref}
       type="button"
       className="fnl-icon-btn danger"
-      title={confirming ? 'Confirmar eliminación' : 'Eliminar paso'}
+      title="Eliminar paso"
       onClick={handleClick}
-      style={confirming ? { color: 'var(--color-danger)' } : undefined}
     >
-      <Icon name={confirming ? 'check' : 'trash-2'} />
+      <Icon name="trash-2" />
     </button>
   )
 }
@@ -404,7 +385,11 @@ export default function Funnel() {
     setSaveError('')
     try {
       await apiDelete(`/api/funnel/nodes/${node.id}`)
-      setNodes((prev) => prev.filter((n) => n.id !== node.id))
+      const remaining = nodes.filter((n) => n.id !== node.id)
+      setNodes(remaining)
+      if (activePillId === node.id) {
+        setActivePillId(remaining[0]?.id || null)
+      }
       setDirtyIds((prev) => {
         const next = new Set(prev)
         next.delete(node.id)
@@ -413,7 +398,7 @@ export default function Funnel() {
     } catch (err) {
       setSaveError(err.message || 'No se pudo eliminar el paso')
     }
-  }, [])
+  }, [activePillId, nodes])
 
   const handleMoveNode = useCallback((id, direction) => {
     setNodes((prev) => {

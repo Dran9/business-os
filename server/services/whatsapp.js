@@ -39,14 +39,16 @@ function resolveWhatsAppConfig(rawConfig = {}) {
       metaConfig.access_token,
       metaConfig.token,
       process.env.WHATSAPP_ACCESS_TOKEN,
-      process.env.META_ACCESS_TOKEN
+      process.env.META_ACCESS_TOKEN,
+      process.env.WA_TOKEN        // compatibilidad con naming de agenda4.0
     ),
     phoneNumberId: firstDefined(
       rawConfig.phoneNumberId,
       waConfig.phone_number_id,
       metaConfig.phone_number_id,
       process.env.WHATSAPP_PHONE_NUMBER_ID,
-      process.env.META_PHONE_NUMBER_ID
+      process.env.META_PHONE_NUMBER_ID,
+      process.env.WA_PHONE_ID     // compatibilidad con naming de agenda4.0
     ),
     businessAccountId: firstDefined(
       rawConfig.businessAccountId,

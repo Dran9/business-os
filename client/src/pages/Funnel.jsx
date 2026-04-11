@@ -88,6 +88,11 @@ function normalizeKeywords(value) {
   return []
 }
 
+function keywordsToText(value) {
+  if (typeof value === 'string') return value
+  return normalizeKeywords(value).join(', ')
+}
+
 function normalizeOptions(value) {
   if (!Array.isArray(value)) return []
   return value.map((opt) => ({
@@ -103,6 +108,7 @@ function normalizeNode(raw) {
     message_text: raw.message_text || '',
     ai_system_prompt: raw.ai_system_prompt || '',
     keywords: normalizeKeywords(raw.keywords),
+    keywords_input: keywordsToText(raw.keywords_input ?? raw.keywords),
     options: normalizeOptions(raw.options),
     next_node_key: raw.next_node_key || '',
     keyword_match_next: raw.keyword_match_next || '',
@@ -133,7 +139,7 @@ function buildPayload(node) {
     base.ai_system_prompt = node.ai_system_prompt || ''
     base.next_node_key = node.next_node_key || null
   } else if (node.type === 'open_question_detect') {
-    base.keywords = node.keywords || []
+    base.keywords = normalizeKeywords(node.keywords_input ?? node.keywords)
     base.keyword_match_next = node.keyword_match_next || null
     base.keyword_nomatch_next = node.keyword_nomatch_next || null
   } else if (node.type === 'options') {
@@ -794,7 +800,7 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
     updateNode(node.id, { options: opts })
   }
 
-  const keywordText = (node.keywords || []).join(', ')
+  const keywordText = keywordsToText(node.keywords_input ?? node.keywords)
 
   // Validaciones inline (visual feedback)
   const needsAiPrompt = node.type === 'open_question_ai' && !node.ai_system_prompt?.trim()
@@ -951,11 +957,14 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
                     type="text"
                     className="fnl-input"
                     value={keywordText}
-                    placeholder="sí, quiero, me interesa, dale, claro..."
-                    onChange={(e) => updateNode(node.id, { keywords: normalizeKeywords(e.target.value) })}
+                    placeholder="taller, interés, constelar, participar, etc."
+                    onChange={(e) => updateNode(node.id, {
+                      keywords_input: e.target.value,
+                      keywords: normalizeKeywords(e.target.value),
+                    })}
                   />
                   <div className="fnl-field-hint">
-                    Separadas por coma. El sistema ignora mayúsculas y acentos automáticamente.
+                    Usa comas para separar palabras o frases. No uses puntos. El sistema ignora mayúsculas y acentos automáticamente.
                   </div>
                 </div>
               ) : null}

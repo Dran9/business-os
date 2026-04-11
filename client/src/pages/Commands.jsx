@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../components/layout/Sidebar'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { apiGet, apiPost, apiPut } from '../utils/api'
@@ -100,8 +100,8 @@ function getConversationBadgeClass(status) {
   return 'badge badge-info'
 }
 
-function getActionButtonClass(tone, isActive) {
-  const base = 'commands-action-card'
+function getActionRowClass(tone, isActive) {
+  const base = 'commands-action-row'
   if (isActive) {
     if (tone === 'danger') return `${base} active danger`
     if (tone === 'primary') return `${base} active primary`
@@ -113,6 +113,8 @@ function getActionButtonClass(tone, isActive) {
 }
 
 export default function Commands() {
+  const searchRef = useRef(null)
+
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query.trim())
   const [results, setResults] = useState([])
@@ -124,7 +126,7 @@ export default function Commands() {
   const [activeAction, setActiveAction] = useState(null)
   const [actionLoading, setActionLoading] = useState('')
   const [actionResult, setActionResult] = useState(null)
-  const [settingsOpen, setSettingsOpen] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [quickSettings, setQuickSettings] = useState(initialQuickSettings())
   const [settingsDirty, setSettingsDirty] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
@@ -211,6 +213,7 @@ export default function Commands() {
   useEffect(() => {
     loadQuickSettings()
     loadRecentLeads()
+    searchRef.current?.focus()
   }, [loadQuickSettings, loadRecentLeads])
 
   useEffect(() => {
@@ -225,9 +228,7 @@ export default function Commands() {
     const timeout = window.setTimeout(async () => {
       try {
         const response = await apiGet(`/api/leads?search=${encodeURIComponent(deferredQuery)}&limit=12`)
-        if (!cancelled) {
-          setResults(response.data || [])
-        }
+        if (!cancelled) setResults(response.data || [])
       } catch {
         if (!cancelled) setResults([])
       } finally {
@@ -258,10 +259,12 @@ export default function Commands() {
   }, true)
 
   function handleSelectLead(leadRow) {
+    if (Number(leadRow.id) === Number(selectedLead?.id)) {
+      clearLead()
+      return
+    }
     setActionResult(null)
     setActiveAction(null)
-    setQuery('')
-    setResults([])
     setPracticalDraft(quickSettings.practical_info_template || '')
     loadLeadDetail(leadRow.id)
   }
@@ -411,98 +414,105 @@ export default function Commands() {
 
   const leadHeaderConversation = currentConversation || pickPreferredConversation(selectedLead?.conversations || [])
   const leadHeaderEnrollment = currentEnrollment || pickPreferredEnrollment(selectedLead?.enrollments || [])
-  const discoveryItems = deferredQuery.length >= 2 ? results : recentLeads
+  const showingSearch = deferredQuery.length >= 2
+  const leadItems = showingSearch ? results : recentLeads
+  const discoveryTitle = showingSearch ? 'Resultados de búsqueda' : '4 leads más recientes'
+  const discoveryHelp = showingSearch
+    ? 'Elige un lead para abrir debajo sus acciones operativas.'
+    : 'Acceso directo a los últimos leads con interacción reciente.'
 
   return (
-    <div className="commands-shell">
-      <section className="commands-hero">
-        <div className="commands-hero-copy">
-          <div className="commands-kicker">Panel táctico</div>
-          <h1 className="page-title">Comandos</h1>
-          <p className="text-secondary">
-            Atajos operativos para actuar en segundos sobre los leads activos, sin entrar al inbox ni al embudo.
+    <div className="commands-page">
+      <section className="card commands-search-shell">
+        <div className="commands-search-copy">
+          <div className="commands-overline">Comandos</div>
+          <h1 className="commands-heading">Acciones rápidas sobre leads</h1>
+          <p className="commands-subtitle">
+            Busca por nombre o celular, o entra directo desde los cuatro contactos más recientes.
           </p>
         </div>
 
-        <div className="commands-hero-stats">
-          <StatCard label="Recientes" value={String(recentLeads.length)} tone="primary" />
-          <StatCard label="Lead activo" value={selectedLead?.name ? '1' : '0'} tone="neutral" />
-          <StatCard label="Buffer" value={`${quickSettings.text_buffer_idle_ms} ms`} tone="success" />
+        <div className="commands-search-box">
+          <div className="commands-search-input-wrap commands-search-input-wrap-large">
+            <Icon name="command" size={20} />
+            <input
+              ref={searchRef}
+              className="input commands-search-input commands-search-input-large"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Buscar lead por nombre o celular..."
+              autoComplete="off"
+            />
+          </div>
+          {query ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setQuery('')
+                setResults([])
+                searchRef.current?.focus()
+              }}
+            >
+              Limpiar búsqueda
+            </button>
+          ) : null}
         </div>
       </section>
 
-      <div className="commands-top-grid mt-4">
-        <section className="card commands-discovery-card">
-          <div className="commands-search-row">
-            <div className="commands-search-input-wrap">
-              <Icon name="command" size={18} />
-              <input
-                className="input commands-search-input"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Buscar lead por nombre o celular..."
+      <section className="card mt-4">
+        <div className="commands-section-head">
+          <div>
+            <h2 className="card-title">{discoveryTitle}</h2>
+            <div className="text-muted text-sm">{discoveryHelp}</div>
+          </div>
+          {!showingSearch ? (
+            <span className="badge badge-info">En vivo</span>
+          ) : null}
+        </div>
+
+        {searching ? (
+          <div className="commands-empty-block mt-4">Buscando leads...</div>
+        ) : null}
+
+        {!searching && showingSearch && results.length === 0 ? (
+          <div className="commands-empty-block mt-4">No se encontraron leads con esa búsqueda.</div>
+        ) : null}
+
+        {!loadingRecent && !showingSearch && recentLeads.length === 0 ? (
+          <div className="commands-empty-block mt-4">Todavía no hay leads recientes para accionar.</div>
+        ) : null}
+
+        {!searching && leadItems.length > 0 ? (
+          <div className="commands-lead-grid mt-4">
+            {leadItems.map((lead) => (
+              <LeadCard
+                key={lead.id}
+                lead={lead}
+                active={Number(lead.id) === Number(selectedLead?.id)}
+                onClick={() => handleSelectLead(lead)}
               />
-            </div>
-            {selectedLead ? (
-              <button type="button" className="btn btn-ghost" onClick={clearLead}>
-                Limpiar
-              </button>
-            ) : null}
+            ))}
           </div>
+        ) : null}
+      </section>
 
-          <div className="commands-section-head mt-4">
-            <div>
-              <h2 className="card-title">{deferredQuery.length >= 2 ? 'Resultados' : 'Leads recientes'}</h2>
-              <div className="text-muted text-sm">
-                {deferredQuery.length >= 2
-                  ? 'Búsqueda instantánea por lead.'
-                  : 'Siempre muestra hasta 4 leads con interacción reciente, excluyendo compras confirmadas.'}
-              </div>
-            </div>
-            {!deferredQuery.length ? (
-              <span className="badge badge-info">Ahora</span>
-            ) : null}
-          </div>
-
-          {searching || loadingRecent ? (
-            <div className="text-muted text-sm mt-4">Cargando leads...</div>
-          ) : null}
-
-          {!searching && deferredQuery.length >= 2 && results.length === 0 ? (
-            <div className="commands-empty-block mt-4">No se encontraron leads con esa búsqueda.</div>
-          ) : null}
-
-          {!loadingRecent && deferredQuery.length < 2 && recentLeads.length === 0 ? (
-            <div className="commands-empty-block mt-4">Todavía no hay leads recientes para accionar.</div>
-          ) : null}
-
-          {discoveryItems.length > 0 ? (
-            <div className="commands-lead-grid mt-4">
-              {discoveryItems.map((lead) => (
-                <LeadCard
-                  key={lead.id}
-                  lead={lead}
-                  active={Number(lead.id) === Number(selectedLead?.id)}
-                  onClick={() => handleSelectLead(lead)}
-                />
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        <section className="card commands-focus-card">
-          {loadingLead ? (
-            <div className="commands-empty-block">Cargando ficha del lead...</div>
-          ) : selectedLead ? (
-            <>
-              <div className="commands-focus-hero">
-                <div className="commands-focus-avatar">{buildInitials(selectedLead.name)}</div>
-                <div className="commands-focus-copy">
-                  <div className="commands-focus-name">{selectedLead.name || 'Sin nombre'}</div>
-                  <div className="text-secondary">
-                    {selectedLead.phone || 'Sin celular'} · {selectedLead.city || 'Sin ciudad'} · {selectedLead.source || 'Sin fuente'}
+      <section className="card mt-4 commands-selected-card">
+        {loadingLead ? (
+          <div className="commands-empty-block">Cargando panel del lead...</div>
+        ) : selectedLead ? (
+          <>
+            <div className="commands-selected-header">
+              <div className="commands-selected-identity">
+                <div className="commands-selected-avatar">{buildInitials(selectedLead.name)}</div>
+                <div className="commands-selected-copy">
+                  <div className="commands-selected-name">{selectedLead.name || 'Sin nombre'}</div>
+                  <div className="commands-selected-meta">
+                    <span>{selectedLead.phone || 'Sin celular'}</span>
+                    <span>{selectedLead.city || 'Sin ciudad'}</span>
+                    <span>{selectedLead.source || 'Sin fuente'}</span>
                   </div>
-                  <div className="commands-chip-wrap mt-3">
+                  <div className="commands-chip-wrap">
                     <span className={getLeadBadgeClass(selectedLead.status)}>
                       {LEAD_STATUS_LABELS[selectedLead.status] || selectedLead.status || 'Lead'}
                     </span>
@@ -511,114 +521,99 @@ export default function Commands() {
                         {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status}
                       </span>
                     ) : null}
+                    {leadHeaderEnrollment ? (
+                      <span className="badge badge-success">
+                        {leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status || 'Inscripción'}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </div>
 
-              <div className="lead-summary-grid mt-4">
-                <LeadMeta label="Último contacto" value={selectedLead.last_contact_at ? timeAgo(selectedLead.last_contact_at) : '—'} />
-                <LeadMeta label="Conversaciones" value={String(selectedLead.conversations?.length || 0)} />
-                <LeadMeta label="Inscripciones" value={String(selectedLead.enrollments?.length || 0)} />
-                <LeadMeta label="Pago actual" value={leadHeaderEnrollment ? `${leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status}` : '—'} />
-              </div>
-
-              <div className="commands-context-grid mt-4">
-                <div className="commands-context-card">
-                  <div className="commands-context-title">Conversación útil</div>
-                  {leadHeaderConversation ? (
-                    <>
-                      <div className="font-semibold mt-1">{leadHeaderConversation.workshop_name || 'Sin taller'}</div>
-                      <div className="text-sm text-secondary mt-1">
-                        {CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status} · {leadHeaderConversation.assigned_to || 'bot'}
-                      </div>
-                      <div className="text-xs text-muted mt-1">
-                        {leadHeaderConversation.escalation_reason || 'Sin motivo de escalamiento'}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-sm text-muted mt-1">Todavía no tiene conversación vinculada.</div>
-                  )}
-                </div>
-
-                <div className="commands-context-card">
-                  <div className="commands-context-title">Inscripción útil</div>
-                  {leadHeaderEnrollment ? (
-                    <>
-                      <div className="font-semibold mt-1">{leadHeaderEnrollment.workshop_name || 'Sin taller'}</div>
-                      <div className="text-sm text-secondary mt-1">
-                        {leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status}
-                        {leadHeaderEnrollment.amount_due ? ` · ${formatCurrency(leadHeaderEnrollment.amount_due)}` : ''}
-                      </div>
-                      <div className="text-xs text-muted mt-1">
-                        {leadHeaderEnrollment.payment_requested_at
-                          ? `Pedido ${formatDateTime(leadHeaderEnrollment.payment_requested_at)}`
-                          : 'Sin recordatorio de pago todavía'}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-sm text-muted mt-1">No hay inscripción lista para QR o cobro.</div>
-                  )}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="commands-empty-block">
-              Selecciona uno de los leads recientes o usa el buscador para abrir su panel de acción inmediata.
+              <button type="button" className="btn btn-ghost" onClick={clearLead}>
+                Cerrar panel
+              </button>
             </div>
-          )}
-        </section>
-      </div>
 
-      <section className="card mt-4">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">Acciones rápidas</h2>
-            <div className="text-muted text-sm">Cada acción toma el lead seleccionado como contexto.</div>
+            <div className="commands-summary-strip">
+              <SummaryItem label="Último contacto" value={selectedLead.last_contact_at ? timeAgo(selectedLead.last_contact_at) : 'Sin interacción'} />
+              <SummaryItem
+                label="Conversación activa"
+                value={leadHeaderConversation
+                  ? `${CONVERSATION_STATUS_LABELS[leadHeaderConversation.status] || leadHeaderConversation.status} · ${leadHeaderConversation.workshop_name || 'General'}`
+                  : 'Sin conversación'}
+              />
+              <SummaryItem
+                label="Inscripción útil"
+                value={leadHeaderEnrollment
+                  ? `${leadHeaderEnrollment.workshop_name || 'Sin taller'} · ${leadHeaderEnrollment.payment_status || leadHeaderEnrollment.status}`
+                  : 'Sin inscripción'}
+              />
+              <SummaryItem
+                label="Monto pendiente"
+                value={leadHeaderEnrollment?.amount_due ? formatCurrency(leadHeaderEnrollment.amount_due) : 'No aplica'}
+              />
+            </div>
+
+            <div className="commands-actions-list">
+              {ACTIONS.map((action) => {
+                const isActive = activeAction === action.id
+                return (
+                  <div key={action.id} className={getActionRowClass(action.tone, isActive)}>
+                    <button
+                      type="button"
+                      className="commands-action-trigger"
+                      onClick={() => setActiveAction((current) => current === action.id ? null : action.id)}
+                    >
+                      <span className="commands-action-trigger-main">
+                        <span className="commands-action-icon">
+                          <Icon name={action.icon} size={18} />
+                        </span>
+                        <span>
+                          <span className="commands-action-label">{action.label}</span>
+                          <span className="commands-action-description">{action.description}</span>
+                        </span>
+                      </span>
+                      <span className="commands-action-toggle">{isActive ? 'Ocultar' : 'Abrir'}</span>
+                    </button>
+
+                    {isActive ? (
+                      <div className="commands-action-drawer">
+                        <ActionPanel
+                          actionId={activeAction}
+                          currentConversation={currentConversation}
+                          currentEnrollment={currentEnrollment}
+                          conversations={selectedLead.conversations || []}
+                          enrollments={selectedLead.enrollments || []}
+                          selectedConversationId={selectedConversationId}
+                          setSelectedConversationId={setSelectedConversationId}
+                          selectedEnrollmentId={selectedEnrollmentId}
+                          setSelectedEnrollmentId={setSelectedEnrollmentId}
+                          practicalDraft={practicalDraft}
+                          setPracticalDraft={setPracticalDraft}
+                          quickSettings={quickSettings}
+                          actionLoading={actionLoading}
+                          onExecute={executeAction}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+
+            {actionResult ? (
+              <div className={`inline-notice mt-4 ${actionResult.success ? 'inline-notice-success' : 'inline-notice-warning'}`}>
+                <div className="font-semibold">{actionResult.title}</div>
+                {actionResult.detail ? <div className="text-sm mt-1">{actionResult.detail}</div> : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="commands-empty-block">
+            Selecciona un lead arriba. Su panel de acciones se abre aquí mismo, sin cambiar de pantalla.
           </div>
-        </div>
-
-        <div className="commands-actions-grid">
-          {ACTIONS.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              className={getActionButtonClass(action.tone, activeAction === action.id)}
-              onClick={() => setActiveAction((current) => current === action.id ? null : action.id)}
-              disabled={!selectedLead}
-            >
-              <span className="commands-action-icon">
-                <Icon name={action.icon} size={18} />
-              </span>
-              <span>{action.label}</span>
-              <small>{action.description}</small>
-            </button>
-          ))}
-        </div>
-
-        {selectedLead && activeAction ? (
-          <div className="commands-action-panel">
-            <ActionPanel
-              actionId={activeAction}
-              currentConversation={currentConversation}
-              currentEnrollment={currentEnrollment}
-              conversations={selectedLead.conversations || []}
-              enrollments={selectedLead.enrollments || []}
-              selectedConversationId={selectedConversationId}
-              setSelectedConversationId={setSelectedConversationId}
-              selectedEnrollmentId={selectedEnrollmentId}
-              setSelectedEnrollmentId={setSelectedEnrollmentId}
-              practicalDraft={practicalDraft}
-              setPracticalDraft={setPracticalDraft}
-              quickSettings={quickSettings}
-              actionLoading={actionLoading}
-              onExecute={executeAction}
-            />
-          </div>
-        ) : null}
-
-        {!selectedLead ? (
-          <div className="text-sm text-muted mt-4">Necesitas elegir un lead para activar estos comandos.</div>
-        ) : null}
+        )}
       </section>
 
       <section className="card mt-4 commands-quick-card">
@@ -629,12 +624,13 @@ export default function Commands() {
         >
           <div>
             <h2 className="card-title">Ajustes rápidos</h2>
-            <div className="text-muted text-sm">Son globales para toda la app, no para un lead puntual.</div>
+            <div className="text-muted text-sm">Configuración global del bot y del mensaje práctico.</div>
           </div>
           <div className="commands-quick-summary">
             <span className="commands-summary-pill">{quickSettings.text_buffer_idle_ms} ms</span>
             <span className="commands-summary-pill">{quickSettings.text_buffer_max_messages} msgs</span>
             <span className="commands-summary-pill">{quickSettings.text_buffer_max_window_ms} ms</span>
+            <span className="commands-summary-pill">{settingsOpen ? 'Ocultar' : 'Abrir'}</span>
           </div>
         </button>
 
@@ -715,13 +711,6 @@ export default function Commands() {
           </div>
         ) : null}
       </section>
-
-      {actionResult ? (
-        <div className={`inline-notice mt-4 ${actionResult.success ? 'inline-notice-success' : 'inline-notice-warning'}`}>
-          <div className="font-semibold">{actionResult.title}</div>
-          {actionResult.detail ? <div className="text-sm mt-1">{actionResult.detail}</div> : null}
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -747,14 +736,8 @@ function ActionPanel({
 
   return (
     <div>
-      <div className="commands-action-title">
-        <Icon name={action.icon} size={16} />
-        <span>{action.label}</span>
-      </div>
-      <div className="text-sm text-muted mt-1">{action.description}</div>
-
       {(actionId === 'resume-bot' || actionId === 'stop-bot' || actionId === 'practical-info') ? (
-        <div className="form-group mt-4">
+        <div className="form-group">
           <label>Conversación</label>
           <select
             className="input"
@@ -771,7 +754,8 @@ function ActionPanel({
           </select>
           {currentConversation ? (
             <div className="text-xs text-muted mt-1">
-              Asignada a {currentConversation.assigned_to || 'bot'} · fase {currentConversation.current_phase || 'sin fase'}
+              Asignada a {currentConversation.assigned_to || 'bot'}
+              {currentConversation.current_phase ? ` · fase ${currentConversation.current_phase}` : ''}
             </div>
           ) : null}
         </div>
@@ -815,14 +799,16 @@ function ActionPanel({
         </div>
       ) : null}
 
-      <button
-        type="button"
-        className={`btn mt-4 ${action.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
-        onClick={() => onExecute(actionId)}
-        disabled={actionLoading === actionId}
-      >
-        {actionLoading === actionId ? 'Ejecutando...' : action.label}
-      </button>
+      <div className="commands-action-footer">
+        <button
+          type="button"
+          className={`btn ${action.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
+          onClick={() => onExecute(actionId)}
+          disabled={actionLoading === actionId}
+        >
+          {actionLoading === actionId ? 'Ejecutando...' : action.label}
+        </button>
+      </div>
     </div>
   )
 }
@@ -867,20 +853,11 @@ function QuickSettingCard({ title, description, value, suffix, children }) {
   )
 }
 
-function StatCard({ label, value, tone }) {
+function SummaryItem({ label, value }) {
   return (
-    <div className={`commands-stat-card ${tone || 'neutral'}`}>
-      <div className="text-xs text-muted">{label}</div>
-      <div className="commands-stat-value">{value}</div>
-    </div>
-  )
-}
-
-function LeadMeta({ label, value }) {
-  return (
-    <div className="lead-meta-card">
-      <div className="text-muted text-sm">{label}</div>
-      <div className="font-semibold mt-1">{value}</div>
+    <div className="commands-summary-item">
+      <div className="commands-summary-label">{label}</div>
+      <div className="commands-summary-value">{value}</div>
     </div>
   )
 }

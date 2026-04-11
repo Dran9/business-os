@@ -5,6 +5,72 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-11 — SESIÓN 29 (completada)
+
+### Resumen
+Se simplificó por completo la UI de `Comandos` para volverla un flujo operativo directo: buscador grande arriba, bloque de 4 leads recientes, apertura del lead seleccionado justo debajo y acciones ejecutables en acordeón por lead. Se eliminaron el hero táctico, métricas y tarjetas de contexto que estaban recargando la pantalla.
+
+### Lo implementado en esta sesión
+1. **Rediseño completo del flujo de Comandos**
+   - `client/src/pages/Commands.jsx`
+   - se rehízo la estructura para que funcione en una sola columna
+   - nuevo orden:
+     - buscador protagonista
+     - leads recientes o resultados
+     - panel expandido del lead seleccionado
+     - ajustes rápidos globales
+
+2. **Panel del lead simplificado**
+   - `client/src/pages/Commands.jsx`
+   - al hacer clic en un lead:
+     - se abre debajo un panel único
+     - muestra identidad, estado, conversación útil, inscripción útil y monto pendiente
+     - permite cerrar el panel sin perder el contexto de búsqueda
+
+3. **Acciones por lead en filas desplegables**
+   - `client/src/pages/Commands.jsx`
+   - las acciones ya no viven en una grilla pesada
+   - ahora cada acción es una fila expandible con:
+     - selector de conversación si aplica
+     - selector de inscripción si aplica
+     - textarea para datos prácticos si aplica
+     - botón de ejecución
+
+4. **Limpieza visual fuerte**
+   - `client/src/index.css`
+   - se añadieron estilos nuevos para:
+     - buscador grande
+     - tarjetas de lead más sobrias
+     - panel seleccionado con resumen operativo
+     - filas de acción expandibles
+     - responsive mobile más claro
+   - se dejó de depender del layout anterior partido en dos columnas grandes
+
+5. **Build para despliegue**
+   - `client/dist/*`
+   - frontend recompilado para dejar actualizado el bundle que se sube a Hostinger
+
+### Contraste con el estado previo
+1. Antes:
+   - hero grande
+   - estadísticas
+   - columna de descubrimiento separada de una columna de foco
+   - demasiadas tarjetas simultáneas
+2. Ahora:
+   - un solo flujo visual
+   - búsqueda primero
+   - lead seleccionado como continuidad natural del bloque superior
+   - acciones entendibles y ejecutables sin ruido
+
+### Verificación
+1. `cd client && npm run build`: OK
+
+### Archivos principales tocados en esta sesión
+- `client/src/pages/Commands.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `HANDOFF.md`
+
 ## Estado actual: 2026-04-11 — SESIÓN 28 (completada)
 
 ### Resumen

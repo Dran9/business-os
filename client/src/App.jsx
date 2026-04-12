@@ -14,6 +14,7 @@ const Leads         = lazy(() => import('./pages/Leads'))
 const Commands      = lazy(() => import('./pages/Commands'))
 const AI            = lazy(() => import('./pages/AI'))
 const Workshops     = lazy(() => import('./pages/Workshops'))
+const WorkshopAttendance = lazy(() => import('./pages/WorkshopAttendance'))
 const Finance       = lazy(() => import('./pages/Finance'))
 const Marketing     = lazy(() => import('./pages/Marketing'))
 const Insights      = lazy(() => import('./pages/Insights'))
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="commands" element={<Commands />} />
             <Route path="ai" element={<AI />} />
             <Route path="workshops" element={<Workshops />} />
+            <Route path="taller/:tallerId/asistencia" element={<WorkshopAttendance />} />
             <Route path="finance" element={<Finance />} />
             <Route path="marketing" element={<Marketing />} />
             <Route path="insights" element={<Insights />} />

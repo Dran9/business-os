@@ -8,6 +8,7 @@ const {
   getReviewState,
   resendPaymentInstructions,
   resendPaymentQr,
+  updateEnrollmentAttendance,
   confirmEnrollmentPayment,
   rejectEnrollmentPayment,
 } = require('../services/enrollments');
@@ -25,9 +26,10 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
     const { workshop_id, state, assigned_to, search, page = 1, limit = 50 } = req.query;
     let sql = `
-      SELECT e.id, e.tenant_id, e.workshop_id, e.lead_id, e.status, e.amount_paid, e.amount_due,
-             e.payment_status, e.enrolled_at, e.confirmed_at, e.cancelled_at,
-             e.payment_requested_at, e.verified_at, e.payment_proof_type, e.ocr_data, e.notes,
+      SELECT e.id, e.tenant_id, e.workshop_id, e.lead_id, e.status, e.participant_role,
+             e.attendance_status, e.amount_paid, e.amount_due, e.payment_status, e.payment_method,
+             e.enrolled_at, e.confirmed_at, e.cancelled_at,
+             e.payment_requested_at, e.verified_at, e.payment_recorded_at, e.payment_proof_type, e.ocr_data, e.notes,
              l.name AS lead_name, l.phone AS lead_phone,
              w.name AS workshop_name, w.date AS workshop_date,
              c.assigned_to,
@@ -97,7 +99,13 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
       } catch {
         ocrData = null;
       }
-      return { ...item, ocr_data: ocrData, payment_proof_present: Boolean(item.payment_proof_type) };
+      return {
+        ...item,
+        ocr_data: ocrData,
+        participant_role: item.participant_role || (String(item.notes || '').includes('Modalidad: constelar') ? 'constela' : 'participa'),
+        attendance_status: item.attendance_status || 'pending',
+        payment_proof_present: Boolean(item.payment_proof_type),
+      };
     });
 
     res.json(result);
@@ -140,11 +148,54 @@ router.get('/:id/proof', authMiddleware, tenantMiddleware, async (req, res) => {
 
 router.post('/:id/confirm', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
   try {
-    const enrollment = await confirmEnrollmentPayment(req.tenantId, Number(req.params.id), req.body?.amount);
+    const enrollment = await confirmEnrollmentPayment(req.tenantId, Number(req.params.id), req.body?.amount, {
+      actor: req.user?.username,
+      paymentMethod: req.body?.payment_method || undefined,
+    });
     res.json({ message: 'Pago confirmado', enrollment });
   } catch (err) {
     console.error('[enrollments confirm]', err);
     res.status(500).json({ error: err.message || 'Error confirmando pago' });
+  }
+});
+
+router.put('/:id/attendance', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const enrollment = await updateEnrollmentAttendance(
+      req.tenantId,
+      Number(req.params.id),
+      req.body?.attendance_status,
+      req.user?.username
+    );
+    res.json({ message: 'Asistencia actualizada', enrollment });
+  } catch (err) {
+    console.error('[enrollments attendance PUT]', err);
+    res.status(500).json({ error: err.message || 'Error actualizando asistencia' });
+  }
+});
+
+router.post('/:id/confirm-onsite', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const enrollmentId = Number(req.params.id);
+    const enrollment = await getEnrollmentWithRelations(req.tenantId, enrollmentId);
+    if (!enrollment) {
+      return res.status(404).json({ error: 'Inscripción no encontrada' });
+    }
+    if (enrollment.payment_status === 'paid') {
+      return res.status(400).json({ error: 'Esta inscripción ya está pagada' });
+    }
+    if (enrollment.payment_method !== 'onsite') {
+      return res.status(400).json({ error: 'Esta inscripción no está marcada como pago en sitio' });
+    }
+
+    const updated = await confirmEnrollmentPayment(req.tenantId, enrollmentId, req.body?.amount, {
+      actor: req.user?.username,
+      paymentMethod: 'onsite',
+    });
+    res.json({ message: 'Pago en sitio confirmado', enrollment: updated });
+  } catch (err) {
+    console.error('[enrollments confirm-onsite]', err);
+    res.status(500).json({ error: err.message || 'Error confirmando pago en sitio' });
   }
 });
 

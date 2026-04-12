@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { apiDelete, apiGet, apiPost, apiPut, getToken } from '../utils/api'
 import { formatCurrency, formatDate } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
@@ -220,6 +221,7 @@ export default function Workshops() {
                   <td className="text-secondary">{workshop.venue_name || '-'}</td>
                   <td>
                     <div className="flex gap-2">
+                      <Link to={`/taller/${workshop.id}/asistencia`} className="btn btn-secondary btn-sm">Asistencia</Link>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleEdit(workshop)}>Editar</button>
                       <ConfirmButton size="sm" label="Eliminar" confirmLabel="¿Eliminar?" onConfirm={() => handleDelete(workshop.id)} />
                     </div>

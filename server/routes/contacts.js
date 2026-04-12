@@ -110,7 +110,18 @@ router.get('/:id', async (req, res) => {
                   WHERE c.tenant_id = l.tenant_id AND c.lead_id = l.id
                   ORDER BY COALESCE(c.last_message_at, c.started_at) DESC, c.id DESC
                   LIMIT 1
-                ) AS workshop_name
+                ) AS workshop_name,
+                (
+                  SELECT CASE
+                    WHEN e.payment_status = 'paid' OR e.status = 'confirmed' THEN 'Inscrito'
+                    WHEN e.payment_method = 'onsite' THEN 'Pago en sitio'
+                    ELSE 'Pendiente de pago'
+                  END
+                  FROM enrollments e
+                  WHERE e.tenant_id = l.tenant_id AND e.lead_id = l.id
+                  ORDER BY COALESCE(e.confirmed_at, e.enrolled_at) DESC, e.id DESC
+                  LIMIT 1
+                ) AS enrollment_status
          FROM leads l
          WHERE l.tenant_id = ? AND l.contact_id = ? AND l.deleted_at IS NULL
          ORDER BY COALESCE(l.last_contact_at, l.created_at) DESC, l.id DESC`,

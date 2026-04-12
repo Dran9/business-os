@@ -5,6 +5,79 @@ Log de progreso para que cualquier instancia de IA (Claude, Codex, etc.) pueda r
 
 ---
 
+## Estado actual: 2026-04-11 — SESIÓN 31 (completada)
+
+### Resumen
+Se creó el módulo standalone de control de asistencia para talleres en la ruta `/taller/:tallerId/asistencia`, optimizado para uso móvil durante el taller. La lista se alimenta desde `enrollments`, ahora tratados como la entidad operativa de “inscritos”, con soporte para asistencia en tiempo real, pago en sitio y alta manual de participantes de emergencia.
+
+### Lo implementado en esta sesión
+1. **Modelo de datos de inscritos extendido**
+   - `server/db.js`
+   - `server/services/chatbot/flowEngine.js`
+   - `enrollments` ahora guarda:
+     - `participant_role` (`constela` / `participa`)
+     - `attendance_status`
+     - timestamps y usuario que marcó asistencia
+     - `payment_method`
+     - timestamps y usuario que registró pago
+   - se migraron inscripciones previas derivando modalidad desde notas existentes
+   - el embudo ahora persiste la modalidad real en columna dedicada, no solo en `notes`
+
+2. **API operativa para control de asistencia**
+   - `server/services/enrollments.js`
+   - `server/routes/enrollments.js`
+   - `server/routes/workshops.js`
+   - nuevos flujos:
+     - `GET /api/workshops/:id/attendance`
+     - `PUT /api/enrollments/:id/attendance`
+     - `POST /api/enrollments/:id/confirm-onsite`
+     - `POST /api/workshops/:id/attendance/manual-entry`
+   - el guardado de asistencia y pago en sitio es inmediato
+   - se emiten eventos SSE para refresco en vivo entre dispositivos
+   - el alta manual crea o reutiliza contacto/lead y genera la inscripción
+
+3. **Nueva página mobile-first de asistencia**
+   - `client/src/pages/WorkshopAttendance.jsx`
+   - `client/src/App.jsx`
+   - `client/src/pages/Workshops.jsx`
+   - `client/src/index.css`
+   - `client/src/pages/Contacts.jsx`
+   - `server/routes/contacts.js`
+   - la pantalla muestra:
+     - header con taller, fecha, venue y contadores
+     - tabla tipo Excel con zebra rows
+     - asistencia táctil `Presente / Ausente / Pendiente`
+     - columna de teléfono
+     - badges de modalidad y pago
+     - ordenamiento por nombre, modalidad, estado de pago y monto
+     - modal para confirmar pago en sitio
+     - modal para añadir participante de emergencia
+   - desde `Talleres` cada fila ya tiene acceso directo a `Asistencia`
+   - en `Contactos` ahora se muestra también el estado de inscripción del lead vinculado
+
+### Verificación
+1. `node --check` OK en:
+   - `server/routes/workshops.js`
+   - `server/routes/enrollments.js`
+   - `server/services/enrollments.js`
+   - `server/services/chatbot/flowEngine.js`
+2. `cd client && npm run build`: OK
+
+### Archivos principales tocados en esta sesión
+- `server/db.js`
+- `server/services/chatbot/flowEngine.js`
+- `server/services/enrollments.js`
+- `server/routes/enrollments.js`
+- `server/routes/workshops.js`
+- `server/routes/contacts.js`
+- `client/src/App.jsx`
+- `client/src/pages/Workshops.jsx`
+- `client/src/pages/WorkshopAttendance.jsx`
+- `client/src/pages/Contacts.jsx`
+- `client/src/index.css`
+- `client/dist/*`
+- `HANDOFF.md`
+
 ## Estado actual: 2026-04-11 — SESIÓN 30 (completada)
 
 ### Resumen

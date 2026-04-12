@@ -4,6 +4,7 @@ const WhatsAppAdapter = require('./channels/whatsapp');
 const { getActivePaymentOptions, getPaymentOptionBySlot, getPaymentQrAsset } = require('./paymentOptions');
 const { broadcast } = require('./adminEvents');
 const { getMessageTarget } = require('./whatsappIdentity');
+const { logActivity } = require('./activityLog');
 
 function parseJson(value) {
   if (!value) return {};
@@ -15,11 +16,25 @@ function parseJson(value) {
   }
 }
 
+function normalizeParticipantRole(value, notes = '') {
+  if (value === 'constela' || value === 'participa') return value;
+  if (notes.includes('Modalidad: constelar')) return 'constela';
+  return 'participa';
+}
+
+function normalizeAttendanceStatus(value) {
+  if (value === 'present' || value === 'absent') return value;
+  return 'pending';
+}
+
 async function getEnrollmentWithRelations(tenantId, enrollmentId) {
   const rows = await query(
-    `SELECT e.id, e.tenant_id, e.workshop_id, e.lead_id, e.status, e.amount_paid, e.amount_due,
-            e.payment_status, e.enrolled_at, e.confirmed_at, e.cancelled_at,
-            e.payment_requested_at, e.verified_at, e.payment_proof_type, e.ocr_data, e.notes,
+    `SELECT e.id, e.tenant_id, e.workshop_id, e.lead_id, e.status, e.participant_role,
+            e.attendance_status, e.attendance_marked_at, e.attendance_marked_by,
+            e.amount_paid, e.amount_due, e.payment_status, e.payment_method,
+            e.enrolled_at, e.confirmed_at, e.cancelled_at,
+            e.payment_requested_at, e.verified_at, e.payment_recorded_at, e.payment_recorded_by,
+            e.payment_proof_type, e.ocr_data, e.notes,
             l.name AS lead_name, l.phone AS lead_phone, l.status AS lead_status,
             w.name AS workshop_name, w.price AS workshop_price, w.early_bird_price,
             c.id AS conversation_id, c.channel, c.assigned_to, c.metadata AS conversation_metadata
@@ -46,6 +61,8 @@ async function getEnrollmentWithRelations(tenantId, enrollmentId) {
     ...rows[0],
     ocr_data: parseJson(rows[0].ocr_data),
     conversation_metadata: parseJson(rows[0].conversation_metadata),
+    participant_role: normalizeParticipantRole(rows[0].participant_role, rows[0].notes || ''),
+    attendance_status: normalizeAttendanceStatus(rows[0].attendance_status),
   };
   enrollment.review_state = getReviewState(enrollment);
   enrollment.payment_proof_present = Boolean(rows[0].payment_proof_type);
@@ -187,7 +204,7 @@ async function resendPaymentQr(tenantId, enrollment) {
 
   await query(
     `UPDATE enrollments
-     SET amount_due = ?, payment_status = 'unpaid', payment_requested_at = NOW()
+     SET amount_due = ?, payment_status = 'unpaid', payment_method = 'transfer', payment_requested_at = NOW()
      WHERE id = ? AND tenant_id = ?`,
     [option.amount, enrollment.id, tenantId]
   );
@@ -195,9 +212,46 @@ async function resendPaymentQr(tenantId, enrollment) {
   return { slot: option.slot, amount: option.amount };
 }
 
-async function confirmEnrollmentPayment(tenantId, enrollmentId, amountOverride = null) {
+async function updateEnrollmentAttendance(tenantId, enrollmentId, attendanceStatus, actor = 'system') {
   const enrollment = await getEnrollmentWithRelations(tenantId, enrollmentId);
   if (!enrollment) throw new Error('Inscripción no encontrada');
+
+  const nextStatus = normalizeAttendanceStatus(attendanceStatus);
+  const shouldStamp = nextStatus !== 'pending';
+
+  await query(
+    `UPDATE enrollments
+     SET attendance_status = ?,
+         attendance_marked_at = ?,
+         attendance_marked_by = ?
+     WHERE id = ? AND tenant_id = ?`,
+    [nextStatus, shouldStamp ? new Date() : null, shouldStamp ? actor : null, enrollmentId, tenantId]
+  );
+
+  await logActivity({
+    tenantId,
+    actor,
+    action: 'enrollment.attendance.update',
+    targetType: 'enrollment',
+    targetId: enrollmentId,
+    details: {
+      workshop_id: enrollment.workshop_id,
+      from: enrollment.attendance_status,
+      to: nextStatus,
+    },
+  });
+
+  broadcast('enrollment:change', { id: enrollmentId, workshopId: enrollment.workshop_id, reason: 'attendance-updated' }, tenantId);
+  broadcast('workshop:change', { id: enrollment.workshop_id, reason: 'attendance-updated' }, tenantId);
+
+  return getEnrollmentWithRelations(tenantId, enrollmentId);
+}
+
+async function confirmEnrollmentPayment(tenantId, enrollmentId, amountOverride = null, options = {}) {
+  const enrollment = await getEnrollmentWithRelations(tenantId, enrollmentId);
+  if (!enrollment) throw new Error('Inscripción no encontrada');
+  const actor = options.actor || 'system';
+  const paymentMethod = options.paymentMethod || (enrollment.payment_method === 'onsite' ? 'onsite' : 'transfer');
 
   const amount = amountOverride == null || amountOverride === ''
     ? Number(enrollment.amount_due || enrollment.amount_paid || enrollment.workshop_price || 0)
@@ -209,11 +263,13 @@ async function confirmEnrollmentPayment(tenantId, enrollmentId, amountOverride =
      SET payment_status = 'paid',
          amount_paid = ?,
          status = 'confirmed',
+         payment_method = ?,
          confirmed_at = COALESCE(confirmed_at, NOW()),
          verified_at = NOW(),
-         notes = NULL
+         payment_recorded_at = NOW(),
+         payment_recorded_by = ?
      WHERE id = ? AND tenant_id = ?`,
-    [amount, enrollmentId, tenantId]
+    [amount, paymentMethod, actor, enrollmentId, tenantId]
   );
 
   const existingIncome = await query(
@@ -258,8 +314,24 @@ async function confirmEnrollmentPayment(tenantId, enrollmentId, amountOverride =
     );
   }
 
+  await logActivity({
+    tenantId,
+    actor,
+    action: 'enrollment.payment.confirm',
+    targetType: 'enrollment',
+    targetId: enrollmentId,
+    details: {
+      workshop_id: enrollment.workshop_id,
+      lead_id: enrollment.lead_id,
+      amount,
+      payment_method: paymentMethod,
+    },
+  });
+
   await syncWorkshopParticipantCount(tenantId, enrollment.workshop_id);
   broadcast('finance:change', { workshopId: enrollment.workshop_id, leadId: enrollment.lead_id, reason: 'manual-payment-confirmed' }, tenantId);
+  broadcast('enrollment:change', { id: enrollmentId, workshopId: enrollment.workshop_id, reason: 'payment-confirmed' }, tenantId);
+  broadcast('workshop:change', { id: enrollment.workshop_id, reason: 'payment-confirmed' }, tenantId);
   broadcast('lead:change', { id: enrollment.lead_id, reason: 'converted' }, tenantId);
   if (enrollment.conversation_id) {
     broadcast('conversation:change', { id: enrollment.conversation_id, reason: 'converted' }, tenantId);
@@ -293,6 +365,8 @@ async function rejectEnrollmentPayment(tenantId, enrollmentId, reason = '') {
   );
 
   await syncWorkshopParticipantCount(tenantId, enrollment.workshop_id);
+  broadcast('enrollment:change', { id: enrollmentId, workshopId: enrollment.workshop_id, reason: 'payment-rejected' }, tenantId);
+  broadcast('workshop:change', { id: enrollment.workshop_id, reason: 'payment-rejected' }, tenantId);
   if (enrollment.conversation_id) {
     broadcast('conversation:change', { id: enrollment.conversation_id, reason: 'payment-rejected' }, tenantId);
   }
@@ -306,6 +380,7 @@ module.exports = {
   syncWorkshopParticipantCount,
   resendPaymentInstructions,
   resendPaymentQr,
+  updateEnrollmentAttendance,
   confirmEnrollmentPayment,
   rejectEnrollmentPayment,
 };

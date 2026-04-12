@@ -121,7 +121,7 @@ router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
     );
 
     const enrollments = await query(
-      `SELECT e.id, e.status, e.payment_status, e.amount_due, e.amount_paid, e.enrolled_at, e.confirmed_at,
+      `SELECT e.id, e.status, e.payment_status, e.payment_method, e.amount_due, e.amount_paid, e.enrolled_at, e.confirmed_at,
               w.name AS workshop_name, w.date AS workshop_date
        FROM enrollments e
        JOIN workshops w ON w.id = e.workshop_id
@@ -157,6 +157,7 @@ router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
       created_at: enrollment.confirmed_at || enrollment.enrolled_at,
       status: enrollment.status,
       payment_status: enrollment.payment_status,
+      payment_method: enrollment.payment_method,
       amount_due: enrollment.amount_due,
       amount_paid: enrollment.amount_paid,
       workshop_name: enrollment.workshop_name,

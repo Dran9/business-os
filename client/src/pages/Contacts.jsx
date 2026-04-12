@@ -428,7 +428,9 @@ export default function Contacts() {
                       {currentLeadRows.map((lead) => (
                         <div key={lead.id} className="mini-list-row">
                           <span>{lead.name || lead.phone}</span>
-                          <span className="text-muted">{lead.workshop_name || 'Sin taller'}</span>
+                          <span className="text-muted">
+                            {lead.workshop_name || 'Sin taller'}{lead.enrollment_status ? ` · ${lead.enrollment_status}` : ''}
+                          </span>
                         </div>
                       ))}
                     </div>

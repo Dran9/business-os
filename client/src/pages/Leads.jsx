@@ -772,6 +772,7 @@ function ScoreBar({ score }) {
 
 function formatEnrollmentStatus(enrollment) {
   if (enrollment.payment_status === 'paid' || enrollment.status === 'confirmed') return 'Confirmado'
+  if (enrollment.payment_method === 'onsite') return 'Pago en sitio'
   if (enrollment.payment_status === 'unpaid') return 'Pendiente de pago'
   return enrollment.status || 'Pendiente'
 }

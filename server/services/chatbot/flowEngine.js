@@ -589,16 +589,18 @@ function inferAmountFromContext(context) {
 
 async function ensureEnrollment({ tenantId, workshopId, leadId, amountDue, modality }) {
   if (!workshopId || !leadId) return;
-  const notes = `Embudo · Modalidad: ${modality || 'participar'}`;
+  const participantRole = modality === 'constelar' ? 'constela' : 'participa';
+  const notes = `Embudo · Modalidad: ${participantRole === 'constela' ? 'constelar' : 'participar'}`;
   await query(
-    `INSERT INTO enrollments (tenant_id, workshop_id, lead_id, status, amount_due, payment_status, notes)
-     VALUES (?, ?, ?, 'pending', ?, 'unpaid', ?)
+    `INSERT INTO enrollments (tenant_id, workshop_id, lead_id, status, participant_role, amount_due, payment_status, notes)
+     VALUES (?, ?, ?, 'pending', ?, ?, 'unpaid', ?)
      ON DUPLICATE KEY UPDATE
-       status = IF(status IN ('confirmed', 'completed'), status, VALUES(status)),
-       amount_due = IF(status IN ('confirmed', 'completed'), amount_due, VALUES(amount_due)),
+       status = IF(status IN ('confirmed', 'attended'), status, VALUES(status)),
+       participant_role = VALUES(participant_role),
+       amount_due = IF(status IN ('confirmed', 'attended'), amount_due, VALUES(amount_due)),
        payment_status = IF(payment_status = 'paid', payment_status, VALUES(payment_status)),
-       notes = IF(status IN ('confirmed', 'completed'), notes, VALUES(notes))`,
-    [tenantId, workshopId, leadId, amountDue || 0, notes]
+       notes = IF(status IN ('confirmed', 'attended'), notes, VALUES(notes))`,
+    [tenantId, workshopId, leadId, participantRole, amountDue || 0, notes]
   );
 }
 
@@ -609,7 +611,7 @@ async function countConstellationEnrollments(tenantId, workshopId) {
      WHERE tenant_id = ?
        AND workshop_id = ?
        AND status IN ('pending', 'confirmed', 'attended')
-       AND notes LIKE '%Modalidad: constelar%'`,
+       AND participant_role = 'constela'`,
     [tenantId, workshopId]
   );
   return Number(rows?.[0]?.total || 0);

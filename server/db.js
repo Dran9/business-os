@@ -803,14 +803,21 @@ async function initializeDatabase() {
         workshop_id INT NOT NULL,
         lead_id INT NOT NULL,
         status ENUM('pending','confirmed','waitlist','cancelled','attended','no_show') DEFAULT 'pending',
+        participant_role ENUM('constela','participa') DEFAULT 'participa',
+        attendance_status ENUM('pending','present','absent') DEFAULT 'pending',
+        attendance_marked_at DATETIME,
+        attendance_marked_by VARCHAR(100),
         amount_paid DECIMAL(10,2) DEFAULT 0,
         amount_due DECIMAL(10,2),
         payment_status ENUM('unpaid','partial','paid','refunded') DEFAULT 'unpaid',
+        payment_method ENUM('unknown','transfer','onsite','manual') DEFAULT 'unknown',
         enrolled_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         confirmed_at DATETIME,
         cancelled_at DATETIME,
         payment_requested_at DATETIME,
         verified_at DATETIME,
+        payment_recorded_at DATETIME,
+        payment_recorded_by VARCHAR(100),
         payment_proof MEDIUMBLOB,
         payment_proof_type VARCHAR(100),
         ocr_data JSON,
@@ -982,6 +989,22 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof MEDIUMBLOB').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_proof_type VARCHAR(100)').catch(() => {});
     await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS ocr_data JSON').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS participant_role ENUM("constela","participa") DEFAULT "participa"').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS attendance_status ENUM("pending","present","absent") DEFAULT "pending"').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS attendance_marked_at DATETIME').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS attendance_marked_by VARCHAR(100)').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_method ENUM("unknown","transfer","onsite","manual") DEFAULT "unknown"').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_recorded_at DATETIME').catch(() => {});
+    await conn.execute('ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS payment_recorded_by VARCHAR(100)').catch(() => {});
+    await conn.execute(
+      "UPDATE enrollments SET participant_role = 'constela' WHERE notes LIKE '%Modalidad: constelar%'"
+    ).catch(() => {});
+    await conn.execute(
+      "UPDATE enrollments SET participant_role = 'participa' WHERE participant_role IS NULL OR participant_role = ''"
+    ).catch(() => {});
+    await conn.execute(
+      "UPDATE enrollments SET payment_method = 'transfer' WHERE payment_method = 'unknown' AND payment_status = 'paid' AND (payment_proof IS NOT NULL OR verified_at IS NOT NULL)"
+    ).catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes MODIFY COLUMN type ENUM("message", "open_question_ai", "open_question_detect", "options", "action", "capture_data") NOT NULL').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS position INT DEFAULT 0').catch(() => {});

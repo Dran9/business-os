@@ -379,7 +379,12 @@ export default function Conversations() {
                       onClick={() => setSelectedId(conversation.id)}
                     >
                       <div className="flex justify-between items-center gap-2">
-                        <span className="font-semibold">{conversation.lead_name || conversation.lead_phone}</span>
+                        <div>
+                          <span className="font-semibold">{conversation.lead_name || conversation.lead_phone}</span>
+                          {conversation.lead_name && conversation.lead_phone && (
+                            <div className="text-xs text-muted" style={{ marginTop: 1 }}>{conversation.lead_phone}</div>
+                          )}
+                        </div>
                         <span className="text-xs text-muted">{timeAgo(conversation.last_message_at)}</span>
                       </div>
                       {conversation.workshop_name && (
@@ -422,6 +427,7 @@ export default function Conversations() {
                   <div className="font-semibold">{selected.lead_name || selected.lead_phone}</div>
                   <div className="text-xs text-muted">
                     {selected.workshop_name || 'Sin taller'} · {STATUS_LABELS[selected.status] || selected.status}
+                    {selected.lead_name && selected.lead_phone && ` · ${selected.lead_phone}`}
                   </div>
                 </div>
                 <div className="flex gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>

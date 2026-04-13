@@ -108,14 +108,16 @@ function AttendanceControl({ name, value, disabled, onChange }) {
   ]
 
   return (
-    <div className="attendance-pill-group" role="radiogroup" aria-label="Asistencia">
+    <div className="attendance-radios" role="radiogroup" aria-label="Asistencia">
       {options.map((option) => (
         <label
           key={option.value}
-          className={`attendance-pill ${value === option.value ? 'active' : ''}`}
+          className={`attendance-radio-option attendance-radio-option-${option.value} ${value === option.value ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+          title={option.label}
+          aria-label={option.label}
         >
           <input
-            className="attendance-radio"
+            className="attendance-radio-input"
             type="radio"
             name={name}
             value={option.value}
@@ -123,7 +125,7 @@ function AttendanceControl({ name, value, disabled, onChange }) {
             disabled={disabled}
             onChange={() => onChange(option.value)}
           />
-          <span>{option.label}</span>
+          <span className="attendance-radio-dot" aria-hidden="true" />
         </label>
       ))}
     </div>
@@ -359,7 +361,7 @@ export default function WorkshopAttendance() {
                   const busy = Boolean(rowBusy[item.id])
                   return (
                     <tr key={item.id}>
-                      <td>
+                      <td className="attendance-cell-radio">
                         <AttendanceControl
                           name={`attendance-${item.id}`}
                           value={item.attendance_status || 'pending'}

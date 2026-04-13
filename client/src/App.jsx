@@ -13,6 +13,7 @@ const Funnel        = lazy(() => import('./pages/Funnel'))
 const Leads         = lazy(() => import('./pages/Leads'))
 const Commands      = lazy(() => import('./pages/Commands'))
 const AI            = lazy(() => import('./pages/AI'))
+const AttendanceHub = lazy(() => import('./pages/AttendanceHub'))
 const Workshops     = lazy(() => import('./pages/Workshops'))
 const WorkshopAttendance = lazy(() => import('./pages/WorkshopAttendance'))
 const Finance       = lazy(() => import('./pages/Finance'))
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="leads" element={<Leads />} />
             <Route path="commands" element={<Commands />} />
             <Route path="ai" element={<AI />} />
+            <Route path="asistencia" element={<AttendanceHub />} />
             <Route path="workshops" element={<Workshops />} />
             <Route path="taller/:tallerId/asistencia" element={<WorkshopAttendance />} />
             <Route path="finance" element={<Finance />} />

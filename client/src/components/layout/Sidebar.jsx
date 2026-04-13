@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom'
 const NAV_ITEMS = [
   { path: '/commands',      label: 'Comandos',        icon: 'command' },
   { path: '/ai',            label: 'IA',              icon: 'brain' },
+  { path: '/asistencia',    label: 'Asistencia',      icon: 'check-circle' },
   { path: '/',              label: 'Dashboard',       icon: 'grid' },
   { path: '/contacts',      label: 'Contacts',        icon: 'contact' },
   { path: '/conversations', label: 'Conversaciones',  icon: 'message-circle' },
@@ -26,6 +27,7 @@ const ICONS = {
   'dollar-sign': <><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></>,
   'megaphone': <><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></>,
   'bar-chart-2': <><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></>,
+  'check-circle': <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>,
   'command': <><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"/></>,
   'brain': <>
     <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>

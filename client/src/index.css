@@ -851,51 +851,73 @@ body {
   font-size: 12px;
 }
 
-.attendance-pill-group {
+.attendance-cell-radio {
+  width: 168px;
+}
+
+.attendance-radios {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 999px;
-  background: var(--color-surface-hover);
-}
-
-.attendance-pill {
-  position: relative;
-  min-width: 98px;
+  justify-content: flex-start;
+  gap: 10px;
   min-height: 44px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-family: var(--font-family);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
+}
+
+.attendance-radio-option {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  transition: all var(--transition-fast);
 }
 
-.attendance-radio {
+.attendance-radio-option.disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.attendance-radio-input {
   position: absolute;
+  inset: 0;
   opacity: 0;
-  pointer-events: none;
+  margin: 0;
+  cursor: pointer;
 }
 
-.attendance-pill:hover:not(:disabled) {
+.attendance-radio-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid var(--color-border);
   background: var(--color-surface);
-  color: var(--color-text);
-}
-
-.attendance-pill.active {
-  background: var(--color-surface);
-  color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+  transition: all var(--transition-fast);
   box-shadow: var(--shadow-sm);
 }
 
-.attendance-pill:disabled {
-  opacity: 0.55;
-  cursor: wait;
+.attendance-radio-option:not(.disabled):hover .attendance-radio-dot {
+  transform: scale(1.07);
+}
+
+.attendance-radio-option.active .attendance-radio-dot {
+  border-color: var(--color-accent);
+  box-shadow: inset 0 0 0 5px var(--color-accent), var(--shadow-sm);
+}
+
+.attendance-radio-option-present.active .attendance-radio-dot {
+  border-color: var(--color-success);
+  box-shadow: inset 0 0 0 5px var(--color-success), var(--shadow-sm);
+}
+
+.attendance-radio-option-absent.active .attendance-radio-dot {
+  border-color: var(--color-danger);
+  box-shadow: inset 0 0 0 5px var(--color-danger), var(--shadow-sm);
+}
+
+.attendance-radio-option-pending.active .attendance-radio-dot {
+  border-color: var(--color-warning);
+  box-shadow: inset 0 0 0 5px var(--color-warning), var(--shadow-sm);
 }
 
 .attendance-badge {
@@ -1026,8 +1048,8 @@ body {
     padding: var(--space-3);
   }
 
-  .attendance-pill {
-    min-width: 88px;
+  .attendance-cell-radio {
+    width: 148px;
   }
 
   .attendance-form-grid {
@@ -1041,15 +1063,8 @@ body {
     align-items: stretch;
   }
 
-  .attendance-pill-group {
-    flex-direction: column;
-    border-radius: var(--radius-lg);
-    width: 100%;
-    min-width: 130px;
-  }
-
-  .attendance-pill {
-    width: 100%;
+  .attendance-radios {
+    gap: 8px;
   }
 }
 

@@ -475,6 +475,9 @@ router.post('/:id/resume-bot', authMiddleware, tenantMiddleware, async (req, res
     });
   } catch (err) {
     console.error('[conversations resume-bot]', err);
+    if (err.code === 'FUNNEL_PAUSED') {
+      return res.status(409).json({ error: err.message });
+    }
     res.status(500).json({ error: err.message || 'Error reanudando el bot' });
   }
 });

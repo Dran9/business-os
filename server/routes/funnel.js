@@ -2,7 +2,9 @@ const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const { tenantMiddleware } = require('../middleware/tenant');
 const { query } = require('../db');
-const { getCurrentNodeEnteredAt } = require('../services/chatbot/flowEngine');
+const { broadcast } = require('../services/adminEvents');
+const { getCurrentNodeEnteredAt, clearTextBuffersForTenant } = require('../services/chatbot/flowEngine');
+const { getFunnelControl, setFunnelPaused } = require('../services/funnelControl');
 
 const router = express.Router();
 const NODE_TYPES = new Set(['message', 'open_question_ai', 'open_question_detect', 'options', 'action', 'capture_data']);
@@ -109,6 +111,41 @@ async function isNodeReferenced(tenantId, nodeKey, excludeId = null) {
   }
   return false;
 }
+
+router.get('/control', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    const control = await getFunnelControl(req.tenantId);
+    res.json(control);
+  } catch (err) {
+    console.error('[funnel control GET]', err);
+    res.status(500).json({ error: 'Error cargando control del embudo' });
+  }
+});
+
+router.put('/control', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
+  try {
+    const rawPaused = req.body?.funnel_paused ?? req.body?.paused;
+    if (typeof rawPaused !== 'boolean') {
+      return res.status(400).json({ error: 'funnel_paused debe ser booleano' });
+    }
+
+    const control = await setFunnelPaused(req.tenantId, rawPaused);
+    const clearedTextBuffers = control.funnel_paused
+      ? clearTextBuffersForTenant(req.tenantId)
+      : 0;
+
+    const payload = {
+      ...control,
+      cleared_text_buffers: clearedTextBuffers,
+      updated_by: req.user?.username || 'admin',
+    };
+    broadcast('funnel:control', payload, req.tenantId);
+    res.json(payload);
+  } catch (err) {
+    console.error('[funnel control PUT]', err);
+    res.status(500).json({ error: 'Error actualizando control del embudo' });
+  }
+});
 
 router.get('/nodes', authMiddleware, tenantMiddleware, async (req, res) => {
   try {

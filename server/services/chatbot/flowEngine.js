@@ -20,6 +20,7 @@ const {
 const { getActiveAiDocumentsContext } = require('../aiContextDocuments');
 const TelegramAdapter = require('../channels/telegram');
 const WhatsAppAdapter = require('../channels/whatsapp');
+const { isFunnelPaused } = require('../funnelControl');
 
 const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options', 'capture_data']);
 const TELEGRAM_BUTTON_PREFIX = 'option:';
@@ -862,7 +863,14 @@ async function saveConversationMessage({
 }
 
 async function sendResponses(channelAdapter, recipientTarget, conversationId, tenantId, responses) {
+  let sentCount = 0;
+
   for (const response of responses) {
+    const paused = await isFunnelPaused(tenantId).catch(() => false);
+    if (paused) {
+      break;
+    }
+
     let sent = null;
 
     if (response.type === 'image') {
@@ -899,18 +907,21 @@ async function sendResponses(channelAdapter, recipientTarget, conversationId, te
       contentType: response.type === 'image' ? 'image' : 'text',
       metadata: response.metadata || null,
     });
+    sentCount += 1;
   }
 
-  if (responses.length > 0) {
+  if (sentCount > 0) {
     await query(
       `UPDATE conversations
        SET bot_messages_count = bot_messages_count + ?,
            last_message_at = NOW()
        WHERE id = ? AND tenant_id = ?`,
-      [responses.length, conversationId, tenantId]
+      [sentCount, conversationId, tenantId]
     );
     broadcast('conversation:change', { id: conversationId, reason: 'outbound-message' }, tenantId);
   }
+
+  return sentCount;
 }
 
 async function applyLeadQualifyingUpdate({ tenantId, leadId, messageText }) {
@@ -1098,6 +1109,15 @@ async function runFlowEngine({
   content_type = 'text',
   incoming = null,
 }) {
+  const paused = await isFunnelPaused(tenant_id).catch(() => false);
+  if (paused) {
+    return buildPausedFlowResult({
+      lead: null,
+      conversation: null,
+      action: 'funnel_paused',
+    });
+  }
+
   const conversation = await getConversationById(tenant_id, conversation_id);
   if (!conversation) {
     throw new Error('Conversación no encontrada para flowEngine');
@@ -1773,6 +1793,20 @@ function getDefaultTextBufferSettings() {
   };
 }
 
+function buildPausedFlowResult({ lead, conversation, action = 'funnel_paused' }) {
+  return {
+    lead,
+    conversation,
+    response_text: '',
+    buttons: [],
+    action_taken: action,
+    session_id: null,
+    session_context: null,
+    tag_analysis_pending: false,
+    responses: [],
+  };
+}
+
 function getTextBufferKey(tenantId, conversationId) {
   return `${tenantId}:${conversationId}`;
 }
@@ -1782,6 +1816,19 @@ function clearBufferedText(key) {
   if (!existing) return;
   if (existing.timer) clearTimeout(existing.timer);
   TEXT_BUFFER_BY_CONVERSATION.delete(key);
+}
+
+function clearTextBuffersForTenant(tenantId) {
+  const prefix = `${tenantId}:`;
+  let cleared = 0;
+
+  for (const key of TEXT_BUFFER_BY_CONVERSATION.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    clearBufferedText(key);
+    cleared += 1;
+  }
+
+  return cleared;
 }
 
 function scheduleBufferedTextFlush(key) {
@@ -1806,6 +1853,15 @@ async function processFlowAfterInboundPersist({
   inboundMessageId,
   messageTextOverride = null,
 }) {
+  const paused = await isFunnelPaused(tenantId).catch(() => false);
+  if (paused) {
+    return buildPausedFlowResult({
+      lead,
+      conversation,
+      action: 'funnel_paused_after_persist',
+    });
+  }
+
   const effectiveText = messageTextOverride == null ? incoming.text : messageTextOverride;
 
   if (['image', 'document'].includes(incoming.contentType)) {
@@ -1855,6 +1911,14 @@ async function processFlowAfterInboundPersist({
     content_type: incoming.contentType,
     incoming: { ...incoming, text: effectiveText, channel: channelAdapter },
   });
+
+  if (String(result?.action_taken || '').startsWith('funnel_paused')) {
+    return buildPausedFlowResult({
+      lead,
+      conversation,
+      action: result.action_taken,
+    });
+  }
 
   if (result.tag_analysis_pending && result.session_id && inboundMessageId) {
     const latestConversation = await getConversationById(tenantId, conversation.id);
@@ -1908,6 +1972,16 @@ async function processFlowAfterInboundPersist({
 async function flushBufferedText(key, { force = false } = {}) {
   const entry = TEXT_BUFFER_BY_CONVERSATION.get(key);
   if (!entry) return null;
+
+  const paused = await isFunnelPaused(entry.tenantId).catch(() => false);
+  if (paused) {
+    clearBufferedText(key);
+    return buildPausedFlowResult({
+      lead: entry.lead,
+      conversation: entry.conversation,
+      action: 'funnel_paused_buffer_cleared',
+    });
+  }
 
   const now = Date.now();
   const idleMs = now - entry.lastAt;
@@ -2146,6 +2220,13 @@ async function stopConversationBot({
 }
 
 async function resumeConversationBot({ tenantId, conversationId, nodeKey = null, actor = 'admin' }) {
+  const paused = await isFunnelPaused(tenantId).catch(() => false);
+  if (paused) {
+    const err = new Error('El embudo está en pausa global. Reanúdalo para activar respuestas automáticas.');
+    err.code = 'FUNNEL_PAUSED';
+    throw err;
+  }
+
   const conversation = await getConversationById(tenantId, conversationId);
   if (!conversation) {
     throw new Error('Conversación no encontrada');
@@ -2227,8 +2308,9 @@ async function resumeConversationBot({ tenantId, conversationId, nodeKey = null,
     await updateFlowSession(result.session_id, { context: nextContext });
   }
 
+  let responsesSent = 0;
   if (Array.isArray(result.responses) && result.responses.length > 0) {
-    await sendResponses(
+    responsesSent = await sendResponses(
       channelAdapter,
       replyTarget,
       conversation.id,
@@ -2242,7 +2324,7 @@ async function resumeConversationBot({ tenantId, conversationId, nodeKey = null,
     resumed_node_key: resumeNode.node_key,
     resumed_node_name: resumeNode.name,
     action_taken: result.action_taken || 'manual-resume',
-    responses_sent: result.responses?.length || 0,
+    responses_sent: responsesSent,
   };
 }
 
@@ -2317,6 +2399,16 @@ async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
   broadcast('message:change', { conversationId: conversation.id, messageId: inboundMessageId, direction: 'inbound' }, tenantId);
 
   const bufferKey = getTextBufferKey(tenantId, conversation.id);
+  const paused = await isFunnelPaused(tenantId).catch(() => false);
+  if (paused) {
+    clearBufferedText(bufferKey);
+    return buildPausedFlowResult({
+      lead,
+      conversation,
+      action: 'funnel_paused',
+    });
+  }
+
   const llmSettings = await getLlmSettings(tenantId).catch(() => null);
   const textBufferSettings = normalizeTextBufferSettings(llmSettings || getDefaultTextBufferSettings());
   if (!shouldBufferIncomingText(incoming)) {
@@ -2352,4 +2444,5 @@ module.exports = {
   getCurrentNodeEnteredAt,
   resumeConversationBot,
   stopConversationBot,
+  clearTextBuffersForTenant,
 };

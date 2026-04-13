@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react'
 import { Link } from 'react-router-dom'
-import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
+import { apiDelete, apiGet, apiPost, apiPut, getStoredUser } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatDate, timeAgo } from '../utils/dates'
 
@@ -268,6 +268,14 @@ export default function Funnel() {
   const [loadingSessionDetail, setLoadingSessionDetail] = useState(false)
   const [sessionSearch, setSessionSearch] = useState('')
   const deferredSessionSearch = useDeferredValue(sessionSearch)
+  const [funnelPaused, setFunnelPaused] = useState(false)
+  const [loadingControl, setLoadingControl] = useState(true)
+  const [savingControl, setSavingControl] = useState(false)
+  const [controlError, setControlError] = useState('')
+  const [controlToast, setControlToast] = useState('')
+  const [currentUser, setCurrentUser] = useState(() => getStoredUser())
+
+  const canManageControl = ['owner', 'admin'].includes(currentUser?.role)
 
   // ── Load nodes/sessions ────────────────────────────────────────────────
   const loadNodes = useCallback(() => {
@@ -300,6 +308,24 @@ export default function Funnel() {
       .finally(() => setLoadingSessions(false))
   }, [])
 
+  const loadFunnelControl = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoadingControl(true)
+    return apiGet('/api/funnel/control')
+      .then((control) => {
+        const paused = control?.funnel_paused === true
+        setFunnelPaused(paused)
+        setControlError('')
+      })
+      .catch((err) => {
+        if (!silent) {
+          setControlError(err.message || 'No se pudo cargar el estado de pausa global')
+        }
+      })
+      .finally(() => {
+        if (!silent) setLoadingControl(false)
+      })
+  }, [])
+
   const loadSessionDetail = useCallback((sessionId) => {
     if (!sessionId) {
       setSelectedSession(null)
@@ -321,7 +347,8 @@ export default function Funnel() {
   useEffect(() => {
     loadNodes()
     loadSessions()
-  }, [loadNodes, loadSessions])
+    loadFunnelControl()
+  }, [loadNodes, loadSessions, loadFunnelControl])
 
   useEffect(() => {
     if (!selectedSessionId && sessions.length > 0) {
@@ -337,6 +364,38 @@ export default function Funnel() {
     loadSessionDetail(selectedSessionId)
   }, [loadSessionDetail, selectedSessionId])
 
+  useEffect(() => {
+    const onUserUpdated = (event) => {
+      setCurrentUser(event.detail || getStoredUser())
+    }
+    window.addEventListener('bos-user-updated', onUserUpdated)
+    return () => window.removeEventListener('bos-user-updated', onUserUpdated)
+  }, [])
+
+  const handleToggleFunnelPause = useCallback(async () => {
+    if (loadingControl || savingControl || !canManageControl) return
+    setControlError('')
+    setControlToast('')
+    setSavingControl(true)
+
+    try {
+      const targetPaused = !funnelPaused
+      const updated = await apiPut('/api/funnel/control', { funnel_paused: targetPaused })
+      const nextPaused = updated?.funnel_paused === true
+      setFunnelPaused(nextPaused)
+      setControlToast(
+        nextPaused
+          ? 'Embudo en pausa global: los mensajes entran y se registran, sin respuestas automáticas.'
+          : 'Embudo activo: las respuestas automáticas volvieron a estar habilitadas.'
+      )
+      setTimeout(() => setControlToast(''), 3200)
+    } catch (err) {
+      setControlError(err.message || 'No se pudo actualizar la pausa global')
+    } finally {
+      setSavingControl(false)
+    }
+  }, [canManageControl, funnelPaused, loadingControl, savingControl])
+
   const { connected } = useAdminEvents({
     funnel_session_update: (payload) => {
       loadSessions()
@@ -346,6 +405,14 @@ export default function Funnel() {
     },
     'conversation:change': () => {
       if (activeTab === 'sessions') loadSessions()
+    },
+    'funnel:control': (payload) => {
+      if (typeof payload?.funnel_paused === 'boolean') {
+        setFunnelPaused(payload.funnel_paused)
+        setControlError('')
+        return
+      }
+      loadFunnelControl({ silent: true })
     },
   })
 
@@ -511,10 +578,29 @@ export default function Funnel() {
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
         <h1 className="page-title">Embudo</h1>
-        <div className="flex items-center gap-2">
+        <div className="funnel-control-panel">
           <span className={`live-indicator ${connected ? 'connected' : ''}`}>
             {connected ? 'En vivo' : 'Reconectando'}
           </span>
+          <span className={`funnel-control-state ${funnelPaused ? 'paused' : 'active'}`}>
+            {loadingControl ? 'Cargando control...' : funnelPaused ? 'Pausa global activa' : 'Bot activo'}
+          </span>
+          {canManageControl ? (
+            <button
+              type="button"
+              className={`funnel-control-toggle ${funnelPaused ? '' : 'active'}`}
+              onClick={handleToggleFunnelPause}
+              disabled={loadingControl || savingControl}
+              title={funnelPaused ? 'Reanudar respuestas automáticas' : 'Pausar respuestas automáticas'}
+            >
+              <span className="funnel-control-toggle-track" aria-hidden="true">
+                <span className="funnel-control-toggle-thumb" />
+              </span>
+              <span>{savingControl ? 'Guardando...' : funnelPaused ? 'Reanudar bot' : 'Pausar bot'}</span>
+            </button>
+          ) : (
+            <span className="text-xs text-muted">Solo admin/owner puede pausar</span>
+          )}
         </div>
       </div>
 
@@ -534,6 +620,20 @@ export default function Funnel() {
           Sesiones activas
         </button>
       </div>
+
+      {controlError ? (
+        <div className="inline-notice inline-notice-warning mt-4">{controlError}</div>
+      ) : null}
+      {controlToast ? (
+        <div className={`inline-notice ${funnelPaused ? 'inline-notice-warning' : 'inline-notice-success'} mt-4`}>
+          {controlToast}
+        </div>
+      ) : null}
+      {!loadingControl && funnelPaused ? (
+        <div className="inline-notice inline-notice-warning mt-4">
+          El embudo está en pausa global: WA/Telegram sigue recibiendo y guardando mensajes, pero el chatbot no responde.
+        </div>
+      ) : null}
 
       {activeTab === 'flow' ? (
         <FlowEditor

@@ -53,6 +53,9 @@ export default function Conversations() {
   const deferredSearch = useDeferredValue(search)
   const conversationsListRef = useRef(null)
   const messagesRef = useRef(null)
+  const selectedIdRef = useRef(null)
+  const realtimeRefreshTimerRef = useRef(null)
+  const realtimeNeedsMessagesRef = useRef(false)
   const requestedConversationId = Number(searchParams.get('conversationId') || 0) || null
   const selection = useSelection()
 
@@ -63,8 +66,8 @@ export default function Conversations() {
   const visibleConversationIds = useMemo(() => conversations.map((conversation) => conversation.id), [conversations])
   const allConversationsSelected = visibleConversationIds.length > 0 && visibleConversationIds.every((id) => selection.isSelected(id))
 
-  const loadConversations = useCallback(() => {
-    setLoading(true)
+  const loadConversations = useCallback(({ silent = false } = {}) => {
+    if (!silent) setLoading(true)
     const params = new URLSearchParams({ limit: '50' })
     if (statusFilter) params.set('status', statusFilter)
     if (assignedFilter) params.set('assigned_to', assignedFilter)
@@ -83,16 +86,18 @@ export default function Conversations() {
         })
       })
       .catch(() => {})
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!silent) setLoading(false)
+      })
   }, [assignedFilter, deferredSearch, inboxStateFilter, statusFilter])
 
-  const loadMessages = useCallback((conversationId) => {
+  const loadMessages = useCallback((conversationId, { silent = false } = {}) => {
     if (!conversationId) {
       setMessages([])
       return Promise.resolve()
     }
 
-    setLoadingMsgs(true)
+    if (!silent) setLoadingMsgs(true)
     return apiGet(`/api/conversations/${conversationId}/messages`)
       .then((items) => {
         startTransition(() => {
@@ -100,10 +105,31 @@ export default function Conversations() {
         })
       })
       .catch(() => {
-        setMessages([])
+        if (!silent) setMessages([])
       })
-      .finally(() => setLoadingMsgs(false))
+      .finally(() => {
+        if (!silent) setLoadingMsgs(false)
+      })
   }, [])
+
+  const scheduleRealtimeRefresh = useCallback(({ conversationId = null, includeMessages = false } = {}) => {
+    if (includeMessages && conversationId && selectedIdRef.current && Number(conversationId) === Number(selectedIdRef.current)) {
+      realtimeNeedsMessagesRef.current = true
+    }
+
+    if (realtimeRefreshTimerRef.current) return
+
+    realtimeRefreshTimerRef.current = setTimeout(() => {
+      realtimeRefreshTimerRef.current = null
+      const shouldReloadMessages = realtimeNeedsMessagesRef.current
+      realtimeNeedsMessagesRef.current = false
+
+      loadConversations({ silent: true })
+      if (shouldReloadMessages && selectedIdRef.current) {
+        loadMessages(selectedIdRef.current, { silent: true })
+      }
+    }, 250)
+  }, [loadConversations, loadMessages])
 
   useEffect(() => {
     loadConversations()
@@ -152,6 +178,10 @@ export default function Conversations() {
   }, [loadMessages, selectedId])
 
   useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
+
+  useEffect(() => {
     setNoteDraft(selected?.internal_notes || '')
   }, [selected?.id, selected?.internal_notes])
 
@@ -173,19 +203,50 @@ export default function Conversations() {
 
   const { connected } = useAdminEvents({
     'conversation:change': (payload) => {
-      loadConversations()
-      if (payload?.id && payload.id === selectedId) {
-        loadMessages(selectedId)
-      }
+      scheduleRealtimeRefresh({
+        conversationId: payload?.id ?? null,
+        includeMessages: true,
+      })
     },
     'message:change': (payload) => {
-      loadConversations()
-      if (payload?.conversationId && payload.conversationId === selectedId) {
-        loadMessages(selectedId)
-      }
+      scheduleRealtimeRefresh({
+        conversationId: payload?.conversationId ?? null,
+        includeMessages: true,
+      })
     },
-    'lead:change': loadConversations,
+    'lead:change': () => scheduleRealtimeRefresh(),
   })
+
+  useEffect(() => {
+    const intervalMs = connected ? 15000 : 5000
+    const interval = setInterval(() => {
+      if (document.hidden) return
+      loadConversations({ silent: true })
+      if (selectedIdRef.current) {
+        loadMessages(selectedIdRef.current, { silent: true })
+      }
+    }, intervalMs)
+
+    const onVisibleOrFocus = () => {
+      loadConversations({ silent: true })
+      if (selectedIdRef.current) {
+        loadMessages(selectedIdRef.current, { silent: true })
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibleOrFocus)
+    window.addEventListener('focus', onVisibleOrFocus)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibleOrFocus)
+      window.removeEventListener('focus', onVisibleOrFocus)
+      if (realtimeRefreshTimerRef.current) {
+        clearTimeout(realtimeRefreshTimerRef.current)
+        realtimeRefreshTimerRef.current = null
+      }
+    }
+  }, [connected, loadConversations, loadMessages])
 
   async function handleAssign(assignedTo) {
     if (!selected) return

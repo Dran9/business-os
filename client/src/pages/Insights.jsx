@@ -4,8 +4,46 @@ import { apiGet } from '../utils/api'
 
 Chart.register(...registerables)
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444',
-  '#06b6d4', '#ec4899', '#f97316', '#14b8a6', '#84cc16']
+const COLORS = ['#6366f1','#22c55e','#eab308','#8b5cf6','#ef4444','#06b6d4','#ec4899','#f97316','#14b8a6','#84cc16']
+
+const KPI_ACCENT = ['#6366f1','#22c55e','#eab308','#f97316','#ec4899','#06b6d4']
+const KPI_VALUE_COLOR = ['#a5b4fc','#22c55e','#eab308','#f97316','#ec4899','#06b6d4']
+
+function toNumber(v) {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function fmtDayMonth(s) {
+  if (!s) return '--'
+  const p = String(s).split('-')
+  return p.length === 3 ? `${p[2]}/${p[1]}` : s
+}
+
+function fmtDate(s) {
+  if (!s) return 'Sin fecha'
+  const p = String(s).split('-')
+  return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s
+}
+
+function fmtBs(n) {
+  return `Bs ${toNumber(n).toLocaleString('es-BO', { maximumFractionDigits: 0 })}`
+}
+
+function stepRate(from, to) {
+  const f = toNumber(from); const t = toNumber(to)
+  if (f <= 0) return null
+  return Math.round((t / f) * 100)
+}
+
+function rateColor(pct) {
+  if (pct == null) return 'var(--color-text-muted)'
+  if (pct >= 60) return '#22c55e'
+  if (pct >= 30) return '#eab308'
+  return '#ef4444'
+}
+
+function clamp(v) { return Math.max(0, Math.min(100, toNumber(v))) }
 
 const FUNNEL_STEPS = [
   { key: 'total', label: 'Total' },
@@ -14,104 +52,109 @@ const FUNNEL_STEPS = [
   { key: 'converted', label: 'Convertidos' },
 ]
 
-function toNumber(value) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
+      letterSpacing: '.08em', color: 'var(--color-text-muted)',
+      margin: '28px 0 12px',
+    }}>
+      {children}
+    </div>
+  )
 }
 
-function formatDayMonth(dateStr) {
-  if (!dateStr || typeof dateStr !== 'string') return '--/--'
-  const parts = dateStr.split('-')
-  if (parts.length !== 3) return dateStr
-  return `${parts[2]}/${parts[1]}`
+function InsightCard({ title, sub, children, style }) {
+  return (
+    <div style={{
+      background: 'var(--color-surface)',
+      border: '1px solid var(--color-border)',
+      borderRadius: 12,
+      padding: 20,
+      ...style,
+    }}>
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: sub ? 2 : 16 }}>{title}</div>
+      {sub && <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>{sub}</div>}
+      {children}
+    </div>
+  )
 }
 
-function formatFullDate(dateStr) {
-  if (!dateStr || typeof dateStr !== 'string') return 'Sin fecha'
-  const parts = dateStr.split('-')
-  if (parts.length !== 3) return dateStr
-  return `${parts[2]}/${parts[1]}/${parts[0]}`
-}
-
-function formatBs(amount) {
-  return `Bs ${toNumber(amount).toLocaleString('es-BO', { maximumFractionDigits: 2 })}`
-}
-
-function getStepRate(fromValue, toValue) {
-  const from = toNumber(fromValue)
-  const to = toNumber(toValue)
-  if (from <= 0) return 0
-  return Math.round((to / from) * 100)
-}
-
-function clampPercent(value) {
-  return Math.max(0, Math.min(100, toNumber(value)))
-}
-
-const GRID_TWO_COLUMNS_STYLE = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-  gap: '1.5rem',
+function KPICard({ label, value, accent, valueColor }) {
+  return (
+    <div style={{
+      background: 'var(--color-surface)',
+      border: '1px solid var(--color-border)',
+      borderRadius: 12,
+      padding: '18px 20px',
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0,
+        height: 3, background: accent,
+      }} />
+      <div style={{
+        fontSize: 11, color: 'var(--color-text-muted)',
+        textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6,
+      }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 700, lineHeight: 1, color: valueColor }}>
+        {value}
+      </div>
+    </div>
+  )
 }
 
 export default function Insights() {
   const [loading, setLoading] = useState(true)
   const [funnel, setFunnel] = useState(null)
-  const [leadsTrend, setLeadsTrend] = useState([])
+  const [trend, setTrend] = useState([])
   const [sources, setSources] = useState([])
-  const [workshopsFinance, setWorkshopsFinance] = useState([])
-  const [flowDropoff, setFlowDropoff] = useState([])
+  const [workshops, setWorkshops] = useState([])
+  const [dropoff, setDropoff] = useState([])
 
-  const trendCanvasRef = useRef(null)
-  const trendInstanceRef = useRef(null)
-  const sourcesCanvasRef = useRef(null)
-  const sourcesInstanceRef = useRef(null)
+  const trendRef = useRef(null)
+  const trendChart = useRef(null)
+  const donutRef = useRef(null)
+  const donutChart = useRef(null)
 
   useEffect(() => {
-    let active = true
-    setLoading(true)
-
+    let alive = true
     Promise.allSettled([
       apiGet('/api/analytics/funnel'),
       apiGet('/api/analytics/leads-trend'),
       apiGet('/api/analytics/sources'),
       apiGet('/api/analytics/workshops-finance'),
       apiGet('/api/analytics/flow-dropoff'),
-    ])
-      .then(([funnelRes, leadsTrendRes, sourcesRes, workshopsRes, dropoffRes]) => {
-        if (!active) return
-
-        setFunnel(funnelRes.status === 'fulfilled' ? (funnelRes.value || null) : null)
-        setLeadsTrend(leadsTrendRes.status === 'fulfilled' && Array.isArray(leadsTrendRes.value) ? leadsTrendRes.value : [])
-        setSources(sourcesRes.status === 'fulfilled' && Array.isArray(sourcesRes.value) ? sourcesRes.value : [])
-        setWorkshopsFinance(workshopsRes.status === 'fulfilled' && Array.isArray(workshopsRes.value) ? workshopsRes.value : [])
-        setFlowDropoff(dropoffRes.status === 'fulfilled' && Array.isArray(dropoffRes.value) ? dropoffRes.value : [])
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-        }
-      })
-
-    return () => {
-      active = false
-    }
+    ]).then(([f, t, s, w, d]) => {
+      if (!alive) return
+      setFunnel(f.status === 'fulfilled' ? f.value || null : null)
+      setTrend(t.status === 'fulfilled' && Array.isArray(t.value) ? t.value : [])
+      setSources(s.status === 'fulfilled' && Array.isArray(s.value) ? s.value : [])
+      setWorkshops(w.status === 'fulfilled' && Array.isArray(w.value) ? w.value : [])
+      setDropoff(d.status === 'fulfilled' && Array.isArray(d.value) ? d.value : [])
+      setLoading(false)
+    })
+    return () => { alive = false }
   }, [])
 
   useEffect(() => {
-    if (!trendCanvasRef.current || !leadsTrend?.length) return
-    trendInstanceRef.current?.destroy()
-    trendInstanceRef.current = new Chart(trendCanvasRef.current, {
+    if (!trendRef.current || !trend.length) return
+    trendChart.current?.destroy()
+    trendChart.current = new Chart(trendRef.current, {
       type: 'line',
       data: {
-        labels: leadsTrend.map((row) => formatDayMonth(row.week_start)),
+        labels: trend.map((r) => fmtDayMonth(r.week_start)),
         datasets: [{
-          data: leadsTrend.map((row) => toNumber(row.total)),
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59,130,246,0.14)',
+          data: trend.map((r) => toNumber(r.total)),
+          borderColor: '#6366f1',
+          backgroundColor: 'rgba(99,102,241,0.12)',
           fill: true,
-          tension: 0.32,
-          pointRadius: 3,
+          tension: 0.35,
+          pointRadius: 4,
+          pointBackgroundColor: '#6366f1',
         }],
       },
       options: {
@@ -119,275 +162,279 @@ export default function Insights() {
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { stepSize: 1 },
-          },
+          x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#7b82a8' } },
+          y: { beginAtZero: true, ticks: { stepSize: 1, color: '#7b82a8' }, grid: { color: 'rgba(255,255,255,0.05)' } },
         },
       },
     })
-    return () => trendInstanceRef.current?.destroy()
-  }, [leadsTrend])
+    return () => trendChart.current?.destroy()
+  }, [trend])
 
   useEffect(() => {
-    if (!sourcesCanvasRef.current || !sources?.length) return
-    sourcesInstanceRef.current?.destroy()
-    sourcesInstanceRef.current = new Chart(sourcesCanvasRef.current, {
+    if (!donutRef.current || !sources.length) return
+    donutChart.current?.destroy()
+    donutChart.current = new Chart(donutRef.current, {
       type: 'doughnut',
       data: {
-        labels: sources.map((row) => row.source || 'sin fuente'),
+        labels: sources.map((r) => r.source || 'sin fuente'),
         datasets: [{
-          data: sources.map((row) => toNumber(row.total)),
-          backgroundColor: sources.map((_, index) => COLORS[index % COLORS.length]),
+          data: sources.map((r) => toNumber(r.total)),
+          backgroundColor: sources.map((_, i) => COLORS[i % COLORS.length]),
           borderWidth: 0,
         }],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        cutout: '65%',
         plugins: { legend: { display: false } },
       },
     })
-    return () => sourcesInstanceRef.current?.destroy()
+    return () => donutChart.current?.destroy()
   }, [sources])
 
   if (loading) {
-    return <div className="text-muted">Cargando insights...</div>
+    return <div className="text-muted" style={{ padding: 32 }}>Cargando insights...</div>
   }
 
-  const totalLeads = toNumber(funnel?.total)
-  const convertedLeads = toNumber(funnel?.converted)
-  const lostLeads = toNumber(funnel?.lost)
-  const qualifiedLeads = toNumber(funnel?.qualified)
-  const negotiatingLeads = toNumber(funnel?.negotiating)
-  const conversionRate = totalLeads > 0 ? Math.round((convertedLeads / totalLeads) * 100) : 0
-  const activeSources = sources.filter((item) => toNumber(item.total) > 0).length
-  const workshopsCount = workshopsFinance.length
-  const maxFunnelValue = Math.max(1, totalLeads, qualifiedLeads, negotiatingLeads, convertedLeads)
+  const total = toNumber(funnel?.total)
+  const converted = toNumber(funnel?.converted)
+  const lost = toNumber(funnel?.lost)
+  const convRate = total > 0 ? Math.round((converted / total) * 100) : 0
+  const activeSources = sources.filter((s) => toNumber(s.total) > 0).length
+  const maxFunnel = Math.max(1, total)
+
+  const dropMax = dropoff.length > 0 ? Math.max(1, ...dropoff.map((r) => toNumber(r.total))) : 1
 
   return (
     <div>
-      <h1 className="page-title">Insights</h1>
-
-      <div className="kpi-grid mt-4">
-        <KPI label="Leads totales" value={totalLeads} />
-        <KPI label="Convertidos" value={convertedLeads} />
-        <KPI label="Tasa %" value={`${conversionRate}%`} />
-        <KPI label="Perdidos" value={lostLeads} />
-        <KPI label="Fuentes activas" value={activeSources} />
-        <KPI label="Talleres" value={workshopsCount} />
+      <div style={{ marginBottom: 28 }}>
+        <h1 className="page-title">Insights</h1>
       </div>
 
-      <div className="mt-4" style={GRID_TWO_COLUMNS_STYLE}>
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Embudo comercial</h2>
-          </div>
-          {!funnel ? (
-            <p className="text-muted">No se pudo cargar el embudo.</p>
-          ) : (
-            <div className="funnel-bar">
-              {FUNNEL_STEPS.map((step, index) => {
-                const value = toNumber(funnel?.[step.key])
-                const nextStep = FUNNEL_STEPS[index + 1]
-                const width = value > 0 ? `${Math.max(8, Math.round((value / maxFunnelValue) * 100))}%` : '0%'
-                return (
-                  <div key={step.key}>
-                    <div className="funnel-step">
-                      <div className="funnel-step-label">{step.label}</div>
-                      <div style={{ flex: 1 }}>
-                        <div className="funnel-step-bar" style={{ width }} />
-                      </div>
-                      <div className="font-semibold">{value}</div>
+      {/* KPI Strip */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 12,
+        marginBottom: 4,
+      }}>
+        <KPICard label="Leads totales" value={total} accent={KPI_ACCENT[0]} valueColor={KPI_VALUE_COLOR[0]} />
+        <KPICard label="Convertidos" value={converted} accent={KPI_ACCENT[1]} valueColor={KPI_VALUE_COLOR[1]} />
+        <KPICard label="Tasa conversión" value={`${convRate}%`} accent={KPI_ACCENT[2]} valueColor={KPI_VALUE_COLOR[2]} />
+        <KPICard label="Perdidos" value={lost} accent={KPI_ACCENT[3]} valueColor={KPI_VALUE_COLOR[3]} />
+        <KPICard label="Fuentes activas" value={activeSources} accent={KPI_ACCENT[4]} valueColor={KPI_VALUE_COLOR[4]} />
+        <KPICard label="Talleres" value={workshops.length} accent={KPI_ACCENT[5]} valueColor={KPI_VALUE_COLOR[5]} />
+      </div>
+
+      {/* Embudo + Tendencia */}
+      <SectionLabel>Embudo y tendencia</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+        <InsightCard title="Embudo comercial" sub="Leads por etapa del ciclo de venta">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {FUNNEL_STEPS.map((step, i) => {
+              const val = toNumber(funnel?.[step.key])
+              const next = FUNNEL_STEPS[i + 1]
+              const rate = next ? stepRate(val, funnel?.[next.key]) : null
+              const pct = Math.max(val > 0 ? 8 : 0, Math.round((val / maxFunnel) * 100))
+              const barColors = ['#6366f1','#06b6d4','#eab308','#22c55e']
+              return (
+                <div key={step.key}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ width: 100, fontSize: 12, color: 'var(--color-text-muted)', textAlign: 'right', flexShrink: 0 }}>
+                      {step.label}
                     </div>
-                    {nextStep ? (
-                      <div className="text-xs text-secondary" style={{ paddingLeft: '124px' }}>
-                        → {getStepRate(value, funnel?.[nextStep.key])}%
+                    <div style={{
+                      flex: 1, background: 'var(--color-surface-hover)',
+                      borderRadius: 4, height: 32, overflow: 'hidden', position: 'relative',
+                    }}>
+                      <div style={{
+                        width: `${pct}%`, height: '100%', background: barColors[i],
+                        display: 'flex', alignItems: 'center', paddingLeft: 10,
+                        fontSize: 13, fontWeight: 600, color: '#fff',
+                        borderRadius: 4, transition: 'width .4s ease',
+                      }}>
+                        {val > 0 ? val : ''}
                       </div>
-                    ) : null}
+                    </div>
+                    <div style={{ width: 44, textAlign: 'right', fontSize: 13, fontWeight: 600, color: 'var(--color-text)' }}>
+                      {val}
+                    </div>
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Tendencia semanal</h2>
+                  {rate !== null && (
+                    <div style={{
+                      paddingLeft: 116, fontSize: 11,
+                      color: rateColor(rate), marginTop: 2, marginBottom: 2,
+                    }}>
+                      → {rate}% pasan
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
-          {!leadsTrend.length ? (
-            <p className="text-muted">No hay semanas suficientes para mostrar tendencia.</p>
+        </InsightCard>
+
+        <InsightCard title="Tendencia semanal" sub="Nuevos leads por semana (últimas 8 semanas)">
+          {trend.length === 0 ? (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>Sin datos de tendencia.</p>
           ) : (
-            <div style={{ height: 200 }}>
-              <canvas ref={trendCanvasRef} />
+            <div style={{ height: 220 }}>
+              <canvas ref={trendRef} />
             </div>
           )}
-        </div>
+        </InsightCard>
       </div>
 
-      <div className="mt-4" style={GRID_TWO_COLUMNS_STYLE}>
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Fuentes de leads</h2>
-          </div>
-          {!sources.length ? (
-            <p className="text-muted">Todavía no hay fuentes registradas.</p>
+      {/* Fuentes */}
+      <SectionLabel>Fuentes de captación</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+        <InsightCard title="Distribución por fuente" sub="De dónde vienen tus leads">
+          {sources.length === 0 ? (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>Sin fuentes registradas.</p>
           ) : (
             <>
               <div style={{ height: 200 }}>
-                <canvas ref={sourcesCanvasRef} />
+                <canvas ref={donutRef} />
               </div>
-              <div className="mt-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.5rem 1rem' }}>
-                {sources.map((row, index) => (
-                  <div key={`${row.source}-${index}`} className="flex items-center gap-2">
-                    <span
-                      aria-hidden
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: '50%',
-                        background: COLORS[index % COLORS.length],
-                        display: 'inline-block',
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span className="text-sm">{row.source || 'sin fuente'}</span>
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: '6px 16px', marginTop: 14,
+              }}>
+                {sources.map((r, i) => (
+                  <div key={r.source || i} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <span style={{
+                      width: 9, height: 9, borderRadius: '50%',
+                      background: COLORS[i % COLORS.length], flexShrink: 0, display: 'inline-block',
+                    }} />
+                    <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{r.source || 'sin fuente'}</span>
                   </div>
                 ))}
               </div>
             </>
           )}
-        </div>
+        </InsightCard>
 
-        <div className="card">
-          <div className="card-header">
-            <h2 className="card-title">Conversión por fuente</h2>
-          </div>
-          {!sources.length ? (
-            <p className="text-muted">Sin datos de conversión por fuente.</p>
+        <InsightCard title="Conversión por fuente" sub="Efectividad de cada canal">
+          {sources.length === 0 ? (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>Sin datos.</p>
           ) : (
-            <div className="table-container">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Fuente</th>
-                    <th>Leads</th>
-                    <th>Convertidos</th>
-                    <th>Tasa</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sources.map((row, index) => (
-                    <tr key={`${row.source}-${index}`}>
-                      <td className="font-semibold">{row.source || 'sin fuente'}</td>
-                      <td>{toNumber(row.total)}</td>
-                      <td>{toNumber(row.converted)}</td>
-                      <td>{toNumber(row.conversion_rate)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="card mt-4">
-        <div className="card-header">
-          <h2 className="card-title">Abandono en el bot</h2>
-        </div>
-        {!flowDropoff.length ? (
-          <p className="text-muted">No hay abandonos registrados.</p>
-        ) : (
-          <div className="table-container">
-            <table className="table">
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr>
-                  <th>Nodo</th>
-                  <th>Nombre</th>
-                  <th>Abandonos</th>
+                  {['Fuente','Leads','Convertidos','Tasa'].map((h) => (
+                    <th key={h} style={{
+                      textAlign: 'left', paddingBottom: 10,
+                      fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)',
+                      textTransform: 'uppercase', letterSpacing: '.05em',
+                    }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {flowDropoff.map((row, index) => (
-                  <tr key={`${row.node_key || 'nodo'}-${index}`}>
-                    <td className="font-semibold">{row.node_key || '-'}</td>
-                    <td>{row.node_name || 'Sin nombre'}</td>
-                    <td>{toNumber(row.total)}</td>
+                {sources.map((r, i) => (
+                  <tr key={r.source || i} style={{ borderTop: '1px solid var(--color-border)' }}>
+                    <td style={{ padding: '9px 0', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <span style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: COLORS[i % COLORS.length], flexShrink: 0, display: 'inline-block',
+                      }} />
+                      {r.source || 'sin fuente'}
+                    </td>
+                    <td style={{ padding: '9px 8px' }}>{toNumber(r.total)}</td>
+                    <td style={{ padding: '9px 8px' }}>{toNumber(r.converted)}</td>
+                    <td style={{ padding: '9px 0', fontWeight: 600, color: rateColor(toNumber(r.conversion_rate)) }}>
+                      {toNumber(r.conversion_rate)}%
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
-        )}
+          )}
+        </InsightCard>
       </div>
 
-      <div className="card mt-4">
-        <div className="card-header">
-          <h2 className="card-title">Salud financiera por taller</h2>
-        </div>
-        {!workshopsFinance.length ? (
-          <p className="text-muted">Sin talleres registrados.</p>
+      {/* Abandono en el bot */}
+      <SectionLabel>Abandono en el bot</SectionLabel>
+      <InsightCard title="Nodos de abandono" sub="En qué punto del flujo la gente se va sin comprar">
+        {dropoff.length === 0 ? (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>No hay abandonos registrados.</p>
         ) : (
           <div>
-            {workshopsFinance.map((workshop, index) => {
-              const enrolled = toNumber(workshop.enrolled)
-              const paid = toNumber(workshop.paid)
-              const maxParticipants = toNumber(workshop.max_participants)
-              const fillRate = toNumber(workshop.fill_rate)
-              const paymentRate = toNumber(workshop.payment_rate)
+            {dropoff.map((row, i) => {
+              const pct = Math.round((toNumber(row.total) / dropMax) * 100)
               return (
-                <div
-                  key={workshop.id || index}
-                  style={{
-                    padding: '1rem 0',
-                    borderBottom: index < workshopsFinance.length - 1 ? '1px solid var(--color-border)' : '0',
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
-                    <div className="font-semibold">{workshop.name || 'Sin nombre'}</div>
-                    <div className="text-sm text-secondary">{formatFullDate(workshop.date)}</div>
+                <div key={row.node_key || i} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '11px 0',
+                  borderBottom: i < dropoff.length - 1 ? '1px solid var(--color-border)' : 'none',
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{row.node_name || row.node_key || '—'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{row.node_key}</div>
                   </div>
-
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-secondary">Llenado</span>
-                      <span className="text-xs text-secondary">{fillRate}%</span>
-                    </div>
-                    <div style={{ background: 'var(--color-border)', borderRadius: 4, height: 8, marginTop: 6 }}>
-                      <div style={{ width: `${clampPercent(fillRate)}%`, background: '#10b981', height: '100%', borderRadius: 4 }} />
-                    </div>
+                  <div style={{ width: 80, height: 6, background: 'var(--color-surface-hover)', borderRadius: 6, overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: '#ef4444', borderRadius: 6 }} />
                   </div>
-
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-secondary">Pagos</span>
-                      <span className="text-xs text-secondary">{paymentRate}%</span>
-                    </div>
-                    <div style={{ background: 'var(--color-border)', borderRadius: 4, height: 8, marginTop: 6 }}>
-                      <div style={{ width: `${clampPercent(paymentRate)}%`, background: '#3b82f6', height: '100%', borderRadius: 4 }} />
-                    </div>
-                  </div>
-
-                  <div className="text-sm text-muted mt-4">
-                    {`${enrolled}/${maxParticipants} inscritos · ${paid} pagaron · ${formatBs(workshop.revenue)} ingresos`}
+                  <div style={{ fontSize: 18, fontWeight: 700, width: 36, textAlign: 'right', color: '#ef4444' }}>
+                    {toNumber(row.total)}
                   </div>
                 </div>
               )
             })}
           </div>
         )}
-      </div>
-    </div>
-  )
-}
+      </InsightCard>
 
-function KPI({ label, value }) {
-  return (
-    <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-value">{value}</div>
+      {/* Salud financiera */}
+      <SectionLabel>Salud financiera por taller</SectionLabel>
+      <InsightCard title="Inscritos y pagos" sub="Llenado y recaudación por evento">
+        {workshops.length === 0 ? (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>Sin talleres registrados.</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {workshops.map((w, i) => {
+              const enrolled = toNumber(w.enrolled)
+              const paid = toNumber(w.paid)
+              const max = toNumber(w.max_participants)
+              const fillRate = clamp(w.fill_rate)
+              const payRate = clamp(w.payment_rate)
+              return (
+                <div key={w.id || i}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{w.name || 'Sin nombre'}</span>
+                    <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{fmtDate(w.date)}</span>
+                  </div>
+
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 5 }}>
+                      <span>Llenado</span><span>{fillRate}%</span>
+                    </div>
+                    <div style={{ height: 10, background: 'var(--color-surface-hover)', borderRadius: 10, overflow: 'hidden' }}>
+                      <div style={{ width: `${fillRate}%`, height: '100%', background: '#22c55e', borderRadius: 10 }} />
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 5 }}>
+                      <span>Pagos recibidos</span><span>{payRate}%</span>
+                    </div>
+                    <div style={{ height: 10, background: 'var(--color-surface-hover)', borderRadius: 10, overflow: 'hidden' }}>
+                      <div style={{ width: `${payRate}%`, height: '100%', background: '#6366f1', borderRadius: 10 }} />
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    {enrolled}/{max} inscritos · {paid} pagaron · {fmtBs(w.revenue)} ingresos
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </InsightCard>
+
+      <div style={{ height: 32 }} />
     </div>
   )
 }

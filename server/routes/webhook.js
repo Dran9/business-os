@@ -66,6 +66,46 @@ async function recordWhatsappStatus(tenantId, statusItem, identity) {
   }
 }
 
+function detectReferralSource(sourceUrl = '') {
+  const normalizedUrl = String(sourceUrl || '').toLowerCase();
+  if (!normalizedUrl) return null;
+  if (normalizedUrl.includes('instagram.com')) return 'instagram';
+  if (normalizedUrl.includes('facebook.com')) return 'facebook';
+  return null;
+}
+
+async function applyMetaReferralToLead({ tenantId, leadId, referral }) {
+  const sourceUrl = String(referral?.source_url || '').trim();
+  if (!leadId || !sourceUrl) return;
+
+  const detectedSource = detectReferralSource(sourceUrl);
+  await query(
+    `UPDATE leads
+     SET source = CASE
+         WHEN (source IS NULL OR source = '') AND ? IS NOT NULL THEN ?
+         ELSE source
+       END,
+       metadata = JSON_SET(
+         COALESCE(metadata, JSON_OBJECT()),
+         '$.referral_source_url', ?,
+         '$.referral_source_type', ?,
+         '$.referral_ad_id', ?
+       )
+     WHERE tenant_id = ? AND id = ?`,
+    [
+      detectedSource,
+      detectedSource,
+      sourceUrl,
+      referral?.source_type || null,
+      referral?.ad_id || null,
+      tenantId,
+      leadId,
+    ]
+  ).catch((err) => {
+    console.error('[webhook/whatsapp] referral lead update skipped:', err.message);
+  });
+}
+
 async function handleWhatsAppWebhook(body, tenantId) {
   const adapter = await getWhatsAppAdapter(tenantId);
   const parsed = adapter.parseWebhookPayload(body);
@@ -124,7 +164,7 @@ async function handleWhatsAppWebhook(body, tenantId) {
       sourcePhoneNumberId,
     });
 
-    await processIncomingMessage({
+    const processingResult = await processIncomingMessage({
       tenantId,
       incoming: {
         ...incoming,
@@ -138,6 +178,12 @@ async function handleWhatsAppWebhook(body, tenantId) {
         metadataSource: 'whatsapp-webhook',
       },
       channelAdapter: adapter,
+    });
+
+    await applyMetaReferralToLead({
+      tenantId,
+      leadId: processingResult?.lead?.id || null,
+      referral: msg.referral || null,
     });
   }
 }

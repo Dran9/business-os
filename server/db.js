@@ -1027,6 +1027,7 @@ async function initializeDatabase() {
     await conn.execute(
       "UPDATE admin_users SET display_name = 'Daniel' WHERE username = 'owner' AND (display_name IS NULL OR display_name = '')"
     ).catch(() => {});
+    await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS metadata JSON').catch(() => {});
 
     await seedInitialFlowNodes(conn, 1);
     await upgradeDefaultEnrollmentCaptureNodes(conn, 1);

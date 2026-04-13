@@ -46,12 +46,6 @@ function getPaymentBadgeClass(value) {
   return 'attendance-badge attendance-badge-danger'
 }
 
-function getAttendanceLabel(value) {
-  if (value === 'present') return 'Presente'
-  if (value === 'absent') return 'Ausente'
-  return 'Pendiente'
-}
-
 function getDisplayAmount(item) {
   return Number(item.amount_paid || item.amount_due || 0)
 }
@@ -315,9 +309,6 @@ export default function WorkshopAttendance() {
               <span>{workshop?.venue_name || workshop?.venue_city || 'Venue por definir'}</span>
             </div>
           </div>
-          <button type="button" className="btn btn-primary" onClick={openEmergencyModal}>
-            Añadir emergencia
-          </button>
         </div>
 
         <div className="attendance-summary-grid">
@@ -344,6 +335,7 @@ export default function WorkshopAttendance() {
                 <tr>
                   <th>Asistencia</th>
                   <th><SortHeader column="name" label="Nombre completo" sortConfig={sortConfig} onToggle={toggleSort} /></th>
+                  <th>Estado</th>
                   <th>Teléfono</th>
                   <th><SortHeader column="participant_role" label="Modalidad" sortConfig={sortConfig} onToggle={toggleSort} /></th>
                   <th><SortHeader column="payment_state" label="Estado de pago" sortConfig={sortConfig} onToggle={toggleSort} /></th>
@@ -354,7 +346,7 @@ export default function WorkshopAttendance() {
               <tbody>
                 {sortedAttendees.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="text-muted">No hay inscritos para este taller todavía.</td>
+                    <td colSpan="8" className="text-muted">No hay inscritos para este taller todavía.</td>
                   </tr>
                 ) : sortedAttendees.map((item) => {
                   const paymentState = normalizePaymentState(item)
@@ -371,7 +363,18 @@ export default function WorkshopAttendance() {
                       </td>
                       <td>
                         <div className="font-semibold">{item.lead_name || 'Sin nombre'}</div>
-                        <div className="text-xs text-muted">{getAttendanceLabel(item.attendance_status || 'pending')}</div>
+                      </td>
+                      <td>
+                        <select
+                          className="input attendance-status-select"
+                          value={item.attendance_status || 'pending'}
+                          disabled={busy}
+                          onChange={(event) => handleAttendanceChange(item.id, event.target.value)}
+                        >
+                          <option value="present">Presente</option>
+                          <option value="absent">Ausente</option>
+                          <option value="pending">Pendiente</option>
+                        </select>
                       </td>
                       <td>{item.lead_phone || '—'}</td>
                       <td>
@@ -494,6 +497,15 @@ export default function WorkshopAttendance() {
           </div>
         </div>
       ) : null}
+
+      <button
+        type="button"
+        className="attendance-fab"
+        onClick={openEmergencyModal}
+        aria-label="Añadir participante de emergencia"
+      >
+        +
+      </button>
     </div>
   )
 }

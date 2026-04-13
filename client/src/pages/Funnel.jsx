@@ -373,7 +373,11 @@ export default function Funnel() {
   }, [])
 
   const handleToggleFunnelPause = useCallback(async () => {
-    if (loadingControl || savingControl || !canManageControl) return
+    if (loadingControl || savingControl) return
+    if (!canManageControl) {
+      setControlError('Tu rol no tiene permiso para pausar/reanudar el embudo global')
+      return
+    }
     setControlError('')
     setControlToast('')
     setSavingControl(true)
@@ -585,22 +589,20 @@ export default function Funnel() {
           <span className={`funnel-control-state ${funnelPaused ? 'paused' : 'active'}`}>
             {loadingControl ? 'Cargando control...' : funnelPaused ? 'Pausa global activa' : 'Bot activo'}
           </span>
-          {canManageControl ? (
-            <button
-              type="button"
-              className={`funnel-control-toggle ${funnelPaused ? '' : 'active'}`}
-              onClick={handleToggleFunnelPause}
-              disabled={loadingControl || savingControl}
-              title={funnelPaused ? 'Reanudar respuestas automáticas' : 'Pausar respuestas automáticas'}
-            >
-              <span className="funnel-control-toggle-track" aria-hidden="true">
-                <span className="funnel-control-toggle-thumb" />
-              </span>
-              <span>{savingControl ? 'Guardando...' : funnelPaused ? 'Reanudar bot' : 'Pausar bot'}</span>
-            </button>
-          ) : (
-            <span className="text-xs text-muted">Solo admin/owner puede pausar</span>
-          )}
+          <button
+            type="button"
+            className={`funnel-control-toggle ${funnelPaused ? '' : 'active'}`}
+            onClick={handleToggleFunnelPause}
+            disabled={loadingControl || savingControl || !canManageControl}
+            title={canManageControl
+              ? (funnelPaused ? 'Reanudar respuestas automáticas' : 'Pausar respuestas automáticas')
+              : 'Solo owner/admin puede cambiar este control'}
+          >
+            <span className="funnel-control-toggle-track" aria-hidden="true">
+              <span className="funnel-control-toggle-thumb" />
+            </span>
+            <span>{savingControl ? 'Guardando...' : funnelPaused ? 'Reanudar bot' : 'Pausar bot'}</span>
+          </button>
         </div>
       </div>
 

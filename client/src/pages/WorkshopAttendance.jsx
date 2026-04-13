@@ -139,6 +139,7 @@ export default function WorkshopAttendance() {
   const [showEmergencyModal, setShowEmergencyModal] = useState(false)
   const [emergencyForm, setEmergencyForm] = useState(initialEmergencyForm())
   const [creatingEmergency, setCreatingEmergency] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
 
   const loadAttendance = useCallback(async () => {
     setLoading(true)
@@ -173,7 +174,16 @@ export default function WorkshopAttendance() {
     },
   }, Boolean(tallerId))
 
-  const sortedAttendees = useMemo(() => sortAttendees(attendees, sortConfig), [attendees, sortConfig])
+  const sortedAttendees = useMemo(() => {
+    const sorted = sortAttendees(attendees, sortConfig)
+    if (!searchQuery.trim()) return sorted
+    const q = searchQuery.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return sorted.filter((item) => {
+      const name = (item.lead_name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      const phone = (item.lead_phone || '').toLowerCase()
+      return name.includes(q) || phone.includes(q)
+    })
+  }, [attendees, sortConfig, searchQuery])
   const summary = useMemo(() => {
     const total = attendees.length
     const present = attendees.filter((item) => item.attendance_status === 'present').length
@@ -326,6 +336,19 @@ export default function WorkshopAttendance() {
       {error ? <div className="inline-notice inline-notice-warning mt-4">{error}</div> : null}
 
       <div className="card mt-4">
+        {!loading && attendees.length > 0 && (
+          <div style={{ padding: '0 0 16px 0' }}>
+            <input
+              className="input"
+              type="search"
+              placeholder="Buscar por nombre o teléfono..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ maxWidth: 320 }}
+              autoComplete="off"
+            />
+          </div>
+        )}
         {loading ? (
           <div className="text-muted">Cargando asistentes...</div>
         ) : (

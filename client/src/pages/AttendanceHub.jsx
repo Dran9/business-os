@@ -1,12 +1,26 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { apiGet } from '../utils/api'
 import { formatDate } from '../utils/dates'
+
+function isUpcoming(workshop) {
+  if (!workshop.date) return true
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return new Date(workshop.date) >= today
+}
+
+function sortWorkshops(workshops) {
+  const upcoming = workshops.filter(isUpcoming).sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
+  const past = workshops.filter((w) => !isUpcoming(w)).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+  return { upcoming, past }
+}
 
 export default function AttendanceHub() {
   const [workshops, setWorkshops] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const navigate = useNavigate()
 
   useEffect(() => {
     let cancelled = false
@@ -31,11 +45,37 @@ export default function AttendanceHub() {
     return () => { cancelled = true }
   }, [])
 
+  const { upcoming, past } = sortWorkshops(workshops)
+
+  function WorkshopRow({ workshop, dimmed }) {
+    return (
+      <tr
+        key={workshop.id}
+        onClick={() => navigate(`/taller/${workshop.id}/asistencia`)}
+        style={{
+          cursor: 'pointer',
+          opacity: dimmed ? 0.45 : 1,
+          transition: 'opacity 0.15s',
+        }}
+        className="attendance-hub-row"
+      >
+        <td className="font-semibold">{workshop.name}</td>
+        <td>{workshop.date ? formatDate(workshop.date) : 'Sin fecha'}</td>
+        <td className="text-secondary">{workshop.venue_name || 'Sin venue'}</td>
+        <td>{workshop.current_participants || 0}/{workshop.max_participants || 0}</td>
+        <td>
+          <span className={`attendance-badge ${dimmed ? '' : 'attendance-badge-success'}`}>
+            {dimmed ? 'Finalizado' : 'Activo'}
+          </span>
+        </td>
+      </tr>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
         <h1 className="page-title">Asistencia</h1>
-        <Link className="btn btn-ghost btn-sm" to="/workshops">Ver talleres</Link>
       </div>
 
       <div className="card mt-4">
@@ -58,23 +98,19 @@ export default function AttendanceHub() {
                   <th>Fecha</th>
                   <th>Venue</th>
                   <th>Cupos</th>
-                  <th></th>
+                  <th>Estado</th>
                 </tr>
               </thead>
               <tbody>
-                {workshops.map((workshop) => (
-                  <tr key={workshop.id}>
-                    <td className="font-semibold">{workshop.name}</td>
-                    <td>{workshop.date ? formatDate(workshop.date) : 'Sin fecha'}</td>
-                    <td className="text-secondary">{workshop.venue_name || 'Sin venue'}</td>
-                    <td>{workshop.current_participants || 0}/{workshop.max_participants || 0}</td>
-                    <td>
-                      <Link className="btn btn-primary btn-sm" to={`/taller/${workshop.id}/asistencia`}>
-                        Abrir asistencia
-                      </Link>
+                {upcoming.map((w) => <WorkshopRow key={w.id} workshop={w} dimmed={false} />)}
+                {past.length > 0 && upcoming.length > 0 && (
+                  <tr>
+                    <td colSpan="5" style={{ padding: '4px 0', borderBottom: '1px solid var(--border-color)' }}>
+                      <span className="text-muted text-xs" style={{ paddingLeft: 8 }}>Talleres pasados</span>
                     </td>
                   </tr>
-                ))}
+                )}
+                {past.map((w) => <WorkshopRow key={w.id} workshop={w} dimmed={true} />)}
               </tbody>
             </table>
           </div>

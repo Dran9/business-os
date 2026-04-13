@@ -13,6 +13,10 @@ const {
   getLlmSettings,
   updateLlmSettings,
 } = require('../services/llmSettings');
+const {
+  exportTenantDataToGoogleSheets,
+  GoogleSheetsConfigError,
+} = require('../services/googleSheetsExport');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -110,6 +114,29 @@ router.get('/payment-options/:slot/qr', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('[settings/payment-options QR GET]', err);
     res.status(500).json({ error: 'Error cargando QR' });
+  }
+});
+
+router.post('/google-sheets/export', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
+  try {
+    req.setTimeout(10 * 60 * 1000);
+    res.setTimeout(10 * 60 * 1000);
+
+    const summary = await exportTenantDataToGoogleSheets({
+      tenantId: req.tenantId,
+      tenant: req.tenant,
+    });
+
+    res.json({
+      message: 'Exportación completada',
+      summary,
+    });
+  } catch (err) {
+    if (err instanceof GoogleSheetsConfigError) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[settings/google-sheets export]', err);
+    res.status(500).json({ error: err.message || 'Error exportando a Google Sheets' });
   }
 });
 

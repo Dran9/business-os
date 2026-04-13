@@ -50,6 +50,9 @@ export default function Settings({ currentUser }) {
   const [savingPayment, setSavingPayment] = useState(false)
   const [savingProofDebugMode, setSavingProofDebugMode] = useState(false)
   const [savingSecurity, setSavingSecurity] = useState(false)
+  const [exportingSheets, setExportingSheets] = useState(false)
+  const [sheetsExportSummary, setSheetsExportSummary] = useState(null)
+  const [sheetsExportFeedback, setSheetsExportFeedback] = useState(null)
   const [paymentLoaded, setPaymentLoaded] = useState(false)
   const [paymentDirty, setPaymentDirty] = useState(false)
   const [notice, setNotice] = useState(null)
@@ -162,6 +165,40 @@ export default function Settings({ currentUser }) {
       alert(err.message)
     } finally {
       setSavingProofDebugMode(false)
+    }
+  }
+
+  async function handleExportGoogleSheets() {
+    setSheetsExportFeedback({
+      type: 'info',
+      text: 'Exportación en curso. No cierres esta pantalla hasta que termine.',
+      createdAt: new Date().toISOString(),
+    })
+    setExportingSheets(true)
+    try {
+      const response = await apiPost('/api/settings/google-sheets/export', {})
+      const summary = response?.summary || null
+      setSheetsExportSummary(summary)
+
+      const baseText = 'Exportación a Google Sheets completada.'
+      const truncatedText = summary?.conversations_truncated
+        ? ` Conversaciones exportadas hasta el límite de ${summary?.conversation_rows_cap || 0} filas para proteger rendimiento.`
+        : ''
+      const message = `${baseText}${truncatedText}`.trim()
+      setSheetsExportFeedback({
+        type: 'success',
+        text: message,
+        createdAt: new Date().toISOString(),
+      })
+      setNotice({ type: 'success', text: message })
+    } catch (err) {
+      setSheetsExportFeedback({
+        type: 'warning',
+        text: `Falló la exportación: ${err.message}`,
+        createdAt: new Date().toISOString(),
+      })
+    } finally {
+      setExportingSheets(false)
     }
   }
 
@@ -297,6 +334,88 @@ export default function Settings({ currentUser }) {
           </button>
         </form>
       </div>
+
+      {canManageTeam && (
+        <div className="card mt-4">
+          <div className="card-header">
+            <h2 className="card-title">Exportación a Google Sheets</h2>
+          </div>
+          <p className="text-muted">
+            Exporta por lotes a las hojas <strong>Contactos</strong>, <strong>Leads</strong>, <strong>Finanzas</strong> y <strong>Conversaciones</strong>.
+            La ejecución es manual para no cargar la app en segundo plano.
+          </p>
+
+          <div className="flex gap-2 mt-4" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={exportingSheets}
+              onClick={handleExportGoogleSheets}
+            >
+              {exportingSheets ? 'Exportando...' : 'Exportar ahora'}
+            </button>
+
+            {sheetsExportSummary ? (
+              <span className="badge badge-info">
+                Última corrida: {Math.max(1, Math.round((Number(sheetsExportSummary.duration_ms || 0) || 0) / 1000))}s
+              </span>
+            ) : null}
+
+            {exportingSheets ? (
+              <span className="badge badge-info">Procesando exportación...</span>
+            ) : null}
+          </div>
+
+          {sheetsExportFeedback ? (
+            <div className={`inline-notice inline-notice-${sheetsExportFeedback.type} mt-4`}>
+              {sheetsExportFeedback.text}
+              <div className="text-muted text-xs mt-4">
+                {new Date(sheetsExportFeedback.createdAt).toLocaleString('es-BO', { timeZone: 'America/La_Paz' })}
+              </div>
+            </div>
+          ) : null}
+
+          {sheetsExportSummary ? (
+            <div className="table-container mt-4">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Hoja</th>
+                    <th>Filas exportadas</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Contactos</td>
+                    <td>{sheetsExportSummary.contacts_rows || 0}</td>
+                  </tr>
+                  <tr>
+                    <td>Leads</td>
+                    <td>{sheetsExportSummary.leads_rows || 0}</td>
+                  </tr>
+                  <tr>
+                    <td>Finanzas (transacciones)</td>
+                    <td>{sheetsExportSummary.finance_transaction_rows || 0}</td>
+                  </tr>
+                  <tr>
+                    <td>Finanzas (metas)</td>
+                    <td>{sheetsExportSummary.finance_goal_rows || 0}</td>
+                  </tr>
+                  <tr>
+                    <td>Conversaciones</td>
+                    <td>
+                      {sheetsExportSummary.conversation_rows || 0}
+                      {sheetsExportSummary.conversations_truncated
+                        ? ` (tope ${sheetsExportSummary.conversation_rows_cap || 0})`
+                        : ''}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {canManageTeam && (
         <>

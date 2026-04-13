@@ -1067,6 +1067,12 @@ body {
   color: var(--color-warning);
 }
 
+.inline-notice-info {
+  background: var(--color-info-bg);
+  border-color: color-mix(in srgb, var(--color-info) 25%, var(--color-border));
+  color: var(--color-info);
+}
+
 @media (max-width: 768px) {
   .attendance-header {
     padding: var(--space-3);

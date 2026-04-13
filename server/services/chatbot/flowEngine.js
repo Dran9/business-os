@@ -914,7 +914,8 @@ async function sendResponses(channelAdapter, recipientTarget, conversationId, te
     await query(
       `UPDATE conversations
        SET bot_messages_count = bot_messages_count + ?,
-           last_message_at = NOW()
+           last_message_at = NOW(),
+           inbox_state = 'pending'
        WHERE id = ? AND tenant_id = ?`,
       [sentCount, conversationId, tenantId]
     );

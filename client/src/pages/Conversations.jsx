@@ -18,7 +18,7 @@ const STATUS_LABELS = {
 const INBOX_STATE_LABELS = {
   open: 'Abierta',
   pending: 'Pendiente',
-  resolved: 'Resuelta',
+  resolved: 'Cerrada',
 }
 
 const TAG_CLASSES = {

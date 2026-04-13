@@ -34,6 +34,62 @@ function escapeHtml(text) {
     .replaceAll('>', '&gt;');
 }
 
+function canAutoManageInboxState(conversation) {
+  return ['active', 'escalated'].includes(conversation?.status);
+}
+
+function normalizeOperationalInboxState(conversation) {
+  if (!canAutoManageInboxState(conversation)) return conversation;
+
+  if (conversation?.last_message_direction === 'inbound' && conversation.inbox_state !== 'open') {
+    return { ...conversation, inbox_state: 'open' };
+  }
+
+  if (conversation?.last_message_direction === 'outbound' && conversation.inbox_state === 'resolved') {
+    return { ...conversation, inbox_state: 'pending' };
+  }
+
+  return conversation;
+}
+
+async function reconcileOperationalInboxStates(tenantId, conversations) {
+  const toOpen = [];
+  const toPending = [];
+
+  for (const conversation of conversations) {
+    if (!canAutoManageInboxState(conversation)) continue;
+
+    if (conversation?.last_message_direction === 'inbound' && conversation.inbox_state !== 'open') {
+      toOpen.push(conversation.id);
+      continue;
+    }
+
+    if (conversation?.last_message_direction === 'outbound' && conversation.inbox_state === 'resolved') {
+      toPending.push(conversation.id);
+    }
+  }
+
+  if (toOpen.length > 0) {
+    const placeholders = toOpen.map(() => '?').join(', ');
+    await query(
+      `UPDATE conversations
+       SET inbox_state = 'open'
+       WHERE tenant_id = ? AND id IN (${placeholders})`,
+      [tenantId, ...toOpen]
+    );
+  }
+
+  if (toPending.length > 0) {
+    const placeholders = toPending.map(() => '?').join(', ');
+    await query(
+      `UPDATE conversations
+       SET inbox_state = 'pending'
+       WHERE tenant_id = ? AND id IN (${placeholders})`,
+      [tenantId, ...toPending]
+    );
+  }
+}
+
 function getTelegramAdapter() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -247,7 +303,14 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
                         WHERE conversation_id = c.id
                         ORDER BY created_at DESC, id DESC
                         LIMIT 1
-                      ) AS last_message
+                      ) AS last_message,
+                      (
+                        SELECT direction
+                        FROM messages
+                        WHERE conversation_id = c.id
+                        ORDER BY created_at DESC, id DESC
+                        LIMIT 1
+                      ) AS last_message_direction
                FROM conversations c
                JOIN leads l ON l.id = c.lead_id
                LEFT JOIN workshops w ON w.id = c.workshop_id
@@ -281,7 +344,9 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
     sql += ' ORDER BY COALESCE(c.last_message_at, c.started_at) DESC';
 
     const result = await queryPaginated(sql, params, { page: Number(page), limit: Number(limit) });
-    result.data = await attachTags(req.tenantId, result.data);
+    const normalized = (result.data || []).map(normalizeOperationalInboxState);
+    await reconcileOperationalInboxStates(req.tenantId, normalized);
+    result.data = await attachTags(req.tenantId, normalized);
     res.json(result);
   } catch (err) {
     console.error('[conversations GET]', err);

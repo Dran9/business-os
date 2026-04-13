@@ -800,7 +800,7 @@ body {
 }
 
 .attendance-table-wrap {
-  margin: calc(var(--space-6) * -1);
+  margin: 0 calc(var(--space-6) * -1) calc(var(--space-6) * -1);
 }
 
 .attendance-table {

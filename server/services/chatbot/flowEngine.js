@@ -73,7 +73,18 @@ function escapeHtml(value) {
 
 function formatRichText(value) {
   const safe = escapeHtml(value || '');
-  return safe.replace(/\*(.+?)\*/g, '<b>$1</b>');
+  return safe
+    .replace(/\*(.+?)\*/g, '<b>$1</b>')
+    .replace(/_(.+?)_/g, '<i>$1</i>')
+    .replace(/~(.+?)~/g, '<s>$1</s>');
+}
+
+function formatOutgoingTextByChannel(channelAdapter, value) {
+  const raw = String(value || '');
+  if (channelAdapter?.channelName === 'telegram') {
+    return formatRichText(raw);
+  }
+  return raw;
 }
 
 function parseNodeOptions(rawValue) {
@@ -919,19 +930,19 @@ async function sendResponses(channelAdapter, recipientTarget, conversationId, te
       sent = await channelAdapter.sendImage(
         recipientTarget,
         response.image,
-        formatRichText(response.caption || ''),
+        formatOutgoingTextByChannel(channelAdapter, response.caption || ''),
         response.mimeType
       );
     } else if (response.type === 'buttons') {
       sent = await channelAdapter.sendButtons(
         recipientTarget,
-        formatRichText(response.text || ''),
+        formatOutgoingTextByChannel(channelAdapter, response.text || ''),
         response.buttons || []
       );
     } else {
       sent = await channelAdapter.sendText(
         recipientTarget,
-        formatRichText(response.text || '')
+        formatOutgoingTextByChannel(channelAdapter, response.text || '')
       );
     }
 
@@ -1171,6 +1182,7 @@ async function runFlowEngine({
 
   let lead = await getLeadById(tenant_id, lead_id || conversation.lead_id);
   let session = await getActiveFlowSession(tenant_id, conversation_id);
+  const latestSession = session || await getLatestFlowSession(tenant_id, conversation_id);
 
   const phone = lead?.phone || incoming?.from || incoming?.senderId || null;
   const waName = lead?.name || incoming?.senderName || null;
@@ -1182,6 +1194,18 @@ async function runFlowEngine({
   }
 
   if (!session) {
+    if (latestSession && ['completed', 'escalated', 'abandoned'].includes(latestSession.status)) {
+      return {
+        response_text: '',
+        buttons: [],
+        action_taken: `session_${latestSession.status}_no_autorestart`,
+        session_id: latestSession.id,
+        session_context: parseJson(latestSession.context, {}),
+        tag_analysis_pending: false,
+        responses: [],
+      };
+    }
+
     let startNode;
     let initialContext = {};
 

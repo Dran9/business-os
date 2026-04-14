@@ -81,6 +81,7 @@ const SESSION_STATUS_LABELS = {
   completed: 'Completada',
   abandoned: 'Abandonada',
 }
+const SESSION_STATUS_VALUES = ['active', 'escalated', 'completed', 'abandoned']
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function sessionLeadLabel(session) {
@@ -280,6 +281,9 @@ export default function Funnel() {
   const [selectedSessionId, setSelectedSessionId] = useState(null)
   const [selectedSession, setSelectedSession] = useState(null)
   const [loadingSessionDetail, setLoadingSessionDetail] = useState(false)
+  const [updatingSessionStatus, setUpdatingSessionStatus] = useState(false)
+  const [sessionStatusError, setSessionStatusError] = useState('')
+  const [sessionStatusToast, setSessionStatusToast] = useState('')
   const [sessionSearch, setSessionSearch] = useState('')
   const deferredSessionSearch = useDeferredValue(sessionSearch)
   const [funnelPaused, setFunnelPaused] = useState(false)
@@ -290,6 +294,7 @@ export default function Funnel() {
   const [currentUser, setCurrentUser] = useState(() => getStoredUser())
 
   const canManageControl = ['owner', 'admin'].includes(currentUser?.role)
+  const canManageSessions = ['owner', 'admin'].includes(currentUser?.role)
 
   // ── Load nodes/sessions ────────────────────────────────────────────────
   const loadNodes = useCallback(() => {
@@ -310,7 +315,7 @@ export default function Funnel() {
 
   const loadSessions = useCallback(() => {
     setLoadingSessions(true)
-    return apiGet('/api/funnel/sessions')
+    return apiGet('/api/funnel/sessions?status=all')
       .then((items) => {
         startTransition(() => {
           setSessions(Array.isArray(items) ? items : [])
@@ -443,6 +448,34 @@ export default function Funnel() {
         .includes(term)
     ))
   }, [deferredSessionSearch, sessions])
+
+  const handleChangeSessionStatus = useCallback(async (sessionId, status) => {
+    if (!canManageSessions) {
+      setSessionStatusError('Tu rol no tiene permiso para cambiar el estado de sesión')
+      return
+    }
+    const nextStatus = String(status || '').trim().toLowerCase()
+    if (!SESSION_STATUS_VALUES.includes(nextStatus)) return
+    if (!sessionId) return
+
+    setSessionStatusError('')
+    setSessionStatusToast('')
+    setUpdatingSessionStatus(true)
+    try {
+      const updated = await apiPut(`/api/funnel/sessions/${sessionId}/status`, { status: nextStatus })
+      setSessions((prev) => prev.map((session) => (
+        Number(session.id) === Number(sessionId) ? { ...session, ...updated } : session
+      )))
+      await loadSessions()
+      await loadSessionDetail(sessionId)
+      setSessionStatusToast(`Estado actualizado a ${SESSION_STATUS_LABELS[nextStatus] || nextStatus}`)
+      setTimeout(() => setSessionStatusToast(''), 2200)
+    } catch (err) {
+      setSessionStatusError(err.message || 'No se pudo actualizar el estado de sesión')
+    } finally {
+      setUpdatingSessionStatus(false)
+    }
+  }, [canManageSessions, loadSessionDetail, loadSessions])
 
   // ── Editor helpers ─────────────────────────────────────────────────────
   const markDirty = useCallback((id) => {
@@ -695,6 +728,12 @@ export default function Funnel() {
           {controlToast}
         </div>
       ) : null}
+      {sessionStatusError ? (
+        <div className="inline-notice inline-notice-warning mt-4">{sessionStatusError}</div>
+      ) : null}
+      {sessionStatusToast ? (
+        <div className="inline-notice inline-notice-success mt-4">{sessionStatusToast}</div>
+      ) : null}
       {!loadingControl && funnelPaused ? (
         <div className="inline-notice inline-notice-warning mt-4">
           El embudo está en pausa global: WA/Telegram sigue recibiendo y guardando mensajes, pero el chatbot no responde.
@@ -729,6 +768,9 @@ export default function Funnel() {
           setSelectedSessionId={setSelectedSessionId}
           loadingSessionDetail={loadingSessionDetail}
           selectedSession={selectedSession}
+          canManageSessions={canManageSessions}
+          updatingSessionStatus={updatingSessionStatus}
+          onChangeSessionStatus={handleChangeSessionStatus}
         />
       )}
     </div>
@@ -1409,6 +1451,9 @@ function SessionsView({
   setSelectedSessionId,
   loadingSessionDetail,
   selectedSession,
+  canManageSessions,
+  updatingSessionStatus,
+  onChangeSessionStatus,
 }) {
   return (
     <div className="mt-4">
@@ -1425,12 +1470,12 @@ function SessionsView({
       <div className="crm-layout mt-4">
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Sesiones activas</h2>
+            <h2 className="card-title">Sesiones del embudo</h2>
           </div>
           {loadingSessions ? (
             <p className="text-muted">Cargando sesiones...</p>
           ) : filteredSessions.length === 0 ? (
-            <p className="text-muted">No hay sesiones activas o escaladas.</p>
+            <p className="text-muted">No hay sesiones.</p>
           ) : (
             <div className="table-container">
               <table className="table">
@@ -1461,9 +1506,20 @@ function SessionsView({
                       </td>
                       <td>{session.current_node_entered_at ? timeAgo(session.current_node_entered_at) : '—'}</td>
                       <td>
-                        <span className={badgeClassForSession(session.status)}>
-                          {SESSION_STATUS_LABELS[session.status] || session.status}
-                        </span>
+                        <select
+                          className="input"
+                          style={{ minWidth: 146 }}
+                          value={session.status || 'active'}
+                          disabled={!canManageSessions || updatingSessionStatus}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => onChangeSessionStatus(session.id, event.target.value)}
+                        >
+                          {SESSION_STATUS_VALUES.map((status) => (
+                            <option key={status} value={status}>
+                              {SESSION_STATUS_LABELS[status] || status}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td>
                         <Link className="btn btn-ghost btn-sm" to={`/conversations?conversationId=${session.conversation_id}`}>
@@ -1490,7 +1546,24 @@ function SessionsView({
 
                 <div className="lead-summary-grid">
                   <SessionMeta label="Nodo actual" value={selectedSession.current_node_name || selectedSession.current_node_key} />
-                  <SessionMeta label="Estado" value={SESSION_STATUS_LABELS[selectedSession.status] || selectedSession.status} />
+                  <SessionMeta
+                    label="Estado"
+                    value={(
+                      <select
+                        className="input"
+                        style={{ marginTop: 6 }}
+                        value={selectedSession.status || 'active'}
+                        disabled={!canManageSessions || updatingSessionStatus}
+                        onChange={(event) => onChangeSessionStatus(selectedSession.id, event.target.value)}
+                      >
+                        {SESSION_STATUS_VALUES.map((status) => (
+                          <option key={status} value={status}>
+                            {SESSION_STATUS_LABELS[status] || status}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  />
                   <SessionMeta label="Canal" value={selectedSession.channel || 'telegram'} />
                   <SessionMeta label="Último update" value={selectedSession.updated_at ? formatDate(selectedSession.updated_at) : '—'} />
                 </div>

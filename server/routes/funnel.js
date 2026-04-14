@@ -9,6 +9,7 @@ const { getFunnelControl, setFunnelPaused } = require('../services/funnelControl
 const router = express.Router();
 const NODE_TYPES = new Set(['message', 'open_question_ai', 'open_question_detect', 'options', 'action', 'capture_data']);
 const MAX_SEND_DELAY_SECONDS = 120;
+const SESSION_STATUSES = new Set(['active', 'escalated', 'completed', 'abandoned']);
 
 function requireManager(req, res, next) {
   if (!['owner', 'admin'].includes(req.user?.role)) {
@@ -417,6 +418,16 @@ router.delete('/nodes/:id', authMiddleware, tenantMiddleware, requireManager, as
 
 router.get('/sessions', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
+    const statusFilter = String(req.query?.status || '').trim().toLowerCase();
+    let whereStatus = "fs.status IN ('active', 'escalated')";
+    const params = [req.tenantId];
+    if (statusFilter === 'all') {
+      whereStatus = '1=1';
+    } else if (statusFilter && SESSION_STATUSES.has(statusFilter)) {
+      whereStatus = 'fs.status = ?';
+      params.push(statusFilter);
+    }
+
     const rows = await query(
       `SELECT fs.*, l.name AS lead_name, l.phone AS lead_phone, c.status AS conversation_status,
               c.channel, c.last_message_at, fn.name AS current_node_name, fn.type AS current_node_type
@@ -425,9 +436,9 @@ router.get('/sessions', authMiddleware, tenantMiddleware, async (req, res) => {
        JOIN conversations c ON c.id = fs.conversation_id
        LEFT JOIN flow_nodes fn
          ON fn.tenant_id = fs.tenant_id AND fn.node_key = fs.current_node_key
-       WHERE fs.tenant_id = ? AND fs.status IN ('active', 'escalated')
+       WHERE fs.tenant_id = ? AND ${whereStatus}
        ORDER BY fs.updated_at DESC, fs.id DESC`,
-      [req.tenantId]
+      params
     );
 
     res.json(rows.map((row) => {
@@ -441,6 +452,136 @@ router.get('/sessions', authMiddleware, tenantMiddleware, async (req, res) => {
   } catch (err) {
     console.error('[funnel sessions GET]', err);
     res.status(500).json({ error: 'Error cargando sesiones del embudo' });
+  }
+});
+
+router.put('/sessions/:id/status', authMiddleware, tenantMiddleware, requireManager, async (req, res) => {
+  try {
+    const nextStatus = String(req.body?.status || '').trim().toLowerCase();
+    if (!SESSION_STATUSES.has(nextStatus)) {
+      return res.status(400).json({ error: 'Estado de sesión inválido' });
+    }
+
+    const rows = await query(
+      `SELECT fs.*, c.status AS conversation_status, c.current_phase, c.inbox_state, c.assigned_to, c.escalation_reason
+       FROM flow_sessions fs
+       JOIN conversations c ON c.id = fs.conversation_id
+       WHERE fs.tenant_id = ? AND fs.id = ?
+       LIMIT 1`,
+      [req.tenantId, Number(req.params.id)]
+    );
+    const session = rows[0];
+    if (!session) {
+      return res.status(404).json({ error: 'Sesión no encontrada' });
+    }
+
+    const context = parseJson(session.context, {});
+    context.pending_input_for = null;
+
+    let currentNodeKey = session.current_node_key;
+    if (nextStatus === 'active') {
+      const currentNodeRows = currentNodeKey
+        ? await query(
+            'SELECT node_key FROM flow_nodes WHERE tenant_id = ? AND node_key = ? AND active = TRUE LIMIT 1',
+            [req.tenantId, currentNodeKey]
+          )
+        : [];
+      if (!currentNodeRows[0]) {
+        const fallbackNodeRows = await query(
+          `SELECT node_key
+           FROM flow_nodes
+           WHERE tenant_id = ? AND active = TRUE
+           ORDER BY position ASC, id ASC
+           LIMIT 1`,
+          [req.tenantId]
+        );
+        currentNodeKey = fallbackNodeRows[0]?.node_key || null;
+      }
+
+      if (!currentNodeKey) {
+        return res.status(400).json({ error: 'No hay nodos activos para reactivar esta sesión' });
+      }
+    }
+
+    await query(
+      `UPDATE flow_sessions
+       SET status = ?, current_node_key = ?, context = ?, updated_at = NOW()
+       WHERE tenant_id = ? AND id = ?`,
+      [nextStatus, currentNodeKey, serializeJson(context), req.tenantId, Number(req.params.id)]
+    );
+
+    if (nextStatus === 'active') {
+      await query(
+        `UPDATE flow_sessions
+         SET status = 'abandoned', updated_at = NOW()
+         WHERE tenant_id = ? AND conversation_id = ? AND status = 'active' AND id <> ?`,
+        [req.tenantId, session.conversation_id, Number(req.params.id)]
+      );
+      await query(
+        `UPDATE conversations
+         SET status = 'active',
+             assigned_to = 'bot',
+             inbox_state = 'open',
+             escalation_reason = NULL,
+             current_phase = ?
+         WHERE tenant_id = ? AND id = ?`,
+        [currentNodeKey, req.tenantId, session.conversation_id]
+      );
+    } else if (nextStatus === 'escalated') {
+      await query(
+        `UPDATE conversations
+         SET status = 'escalated',
+             assigned_to = 'bot',
+             inbox_state = 'open',
+             escalated_at = COALESCE(escalated_at, NOW()),
+             escalation_reason = ?
+         WHERE tenant_id = ? AND id = ?`,
+        [
+          String(req.body?.reason || session.escalation_reason || 'Escalación manual desde embudo').trim(),
+          req.tenantId,
+          session.conversation_id,
+        ]
+      );
+    } else {
+      await query(
+        `UPDATE conversations
+         SET status = 'active',
+             assigned_to = 'bot',
+             escalation_reason = NULL
+         WHERE tenant_id = ? AND id = ?`,
+        [req.tenantId, session.conversation_id]
+      );
+    }
+
+    broadcast('funnel_session_update', { id: Number(req.params.id), reason: 'manual-status-change' }, req.tenantId);
+    broadcast('conversation:change', { id: session.conversation_id, reason: 'manual-status-change' }, req.tenantId);
+
+    const updatedRows = await query(
+      `SELECT fs.*, l.name AS lead_name, l.phone AS lead_phone, c.status AS conversation_status,
+              c.channel, c.last_message_at, c.current_phase, fn.name AS current_node_name, fn.type AS current_node_type
+       FROM flow_sessions fs
+       LEFT JOIN leads l ON l.id = fs.lead_id
+       JOIN conversations c ON c.id = fs.conversation_id
+       LEFT JOIN flow_nodes fn
+         ON fn.tenant_id = fs.tenant_id AND fn.node_key = fs.current_node_key
+       WHERE fs.tenant_id = ? AND fs.id = ?
+       LIMIT 1`,
+      [req.tenantId, Number(req.params.id)]
+    );
+    const updated = updatedRows[0];
+    if (!updated) {
+      return res.status(404).json({ error: 'Sesión no encontrada tras actualizar' });
+    }
+
+    const updatedContext = parseJson(updated.context, {});
+    return res.json({
+      ...updated,
+      context: updatedContext,
+      current_node_entered_at: getCurrentNodeEnteredAt(updatedContext),
+    });
+  } catch (err) {
+    console.error('[funnel sessions/:id/status PUT]', err);
+    return res.status(500).json({ error: 'Error actualizando estado de sesión' });
   }
 });
 

@@ -1764,6 +1764,30 @@ body {
   flex-wrap: wrap;
 }
 
+.fnl-delay-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+.fnl-delay-chip input {
+  width: 58px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  text-align: right;
+}
+
 .fnl-badge {
   display: inline-flex;
   align-items: center;

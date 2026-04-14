@@ -8,6 +8,7 @@ const { getFunnelControl, setFunnelPaused } = require('../services/funnelControl
 
 const router = express.Router();
 const NODE_TYPES = new Set(['message', 'open_question_ai', 'open_question_detect', 'options', 'action', 'capture_data']);
+const MAX_SEND_DELAY_SECONDS = 120;
 
 function requireManager(req, res, next) {
   if (!['owner', 'admin'].includes(req.user?.role)) {
@@ -30,12 +31,28 @@ function serializeJson(value) {
   return value == null ? null : JSON.stringify(value);
 }
 
+function clampSendDelaySeconds(value) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(MAX_SEND_DELAY_SECONDS, Math.round(numeric)));
+}
+
+function buildHistoryEntry(node) {
+  return {
+    node_key: node?.node_key || null,
+    name: node?.name || node?.node_key || '',
+    type: node?.type || null,
+    entered_at: new Date().toISOString(),
+  };
+}
+
 function normalizeNode(row) {
   return {
     ...row,
     keywords: parseJson(row.keywords, []),
     options: parseJson(row.options, []),
     capture_field: row.capture_field || null,
+    send_delay_seconds: clampSendDelaySeconds(row.send_delay_seconds),
   };
 }
 
@@ -62,6 +79,7 @@ function validateNodePayload(body, { isCreate = false } = {}) {
     capture_field: body?.capture_field ? String(body.capture_field).trim() : null,
     action_type: body?.action_type ? String(body.action_type).trim() : null,
     position: Number(body?.position ?? 0),
+    send_delay_seconds: clampSendDelaySeconds(body?.send_delay_seconds),
     active: body?.active !== false,
   };
 
@@ -93,23 +111,130 @@ function validateNodePayload(body, { isCreate = false } = {}) {
   return payload;
 }
 
-async function isNodeReferenced(tenantId, nodeKey, excludeId = null) {
-  const nodes = await getTenantNodes(tenantId);
-  for (const node of nodes) {
-    if (excludeId && Number(node.id) === Number(excludeId)) continue;
-    if (
-      node.next_node_key === nodeKey
-      || node.keyword_match_next === nodeKey
-      || node.keyword_nomatch_next === nodeKey
-    ) {
-      return true;
+function resolveReplacementNodeKey(currentNodeKey, fallbackNodeKey) {
+  if (!fallbackNodeKey) return null;
+  if (fallbackNodeKey === currentNodeKey) return null;
+  return fallbackNodeKey;
+}
+
+async function cleanupReferencesToNode(tenantId, deletedNodeKey, fallbackNodeKey = null) {
+  const rows = await query(
+    `SELECT id, node_key, next_node_key, keyword_match_next, keyword_nomatch_next, options
+     FROM flow_nodes
+     WHERE tenant_id = ? AND node_key <> ?`,
+    [tenantId, deletedNodeKey]
+  );
+
+  let changedRows = 0;
+  const normalizedFallback = fallbackNodeKey ? String(fallbackNodeKey).trim() : null;
+
+  for (const row of rows) {
+    const replacement = resolveReplacementNodeKey(row.node_key, normalizedFallback);
+    let changed = false;
+
+    let nextNodeKey = row.next_node_key || null;
+    let keywordMatchNext = row.keyword_match_next || null;
+    let keywordNoMatchNext = row.keyword_nomatch_next || null;
+
+    if (nextNodeKey === deletedNodeKey) {
+      nextNodeKey = replacement;
+      changed = true;
+    }
+    if (keywordMatchNext === deletedNodeKey) {
+      keywordMatchNext = replacement;
+      changed = true;
+    }
+    if (keywordNoMatchNext === deletedNodeKey) {
+      keywordNoMatchNext = replacement;
+      changed = true;
     }
 
-    if (Array.isArray(node.options) && node.options.some((option) => option?.next_node_key === nodeKey)) {
-      return true;
-    }
+    const optionsRaw = parseJson(row.options, []);
+    const options = Array.isArray(optionsRaw) ? optionsRaw : [];
+    const nextOptions = options.map((option) => {
+      if (!option || option.next_node_key !== deletedNodeKey) return option;
+      changed = true;
+      return {
+        ...option,
+        next_node_key: replacement,
+      };
+    });
+
+    if (!changed) continue;
+
+    await query(
+      `UPDATE flow_nodes
+       SET next_node_key = ?, keyword_match_next = ?, keyword_nomatch_next = ?, options = ?
+       WHERE tenant_id = ? AND id = ?`,
+      [
+        nextNodeKey,
+        keywordMatchNext,
+        keywordNoMatchNext,
+        serializeJson(nextOptions),
+        tenantId,
+        Number(row.id),
+      ]
+    );
+    changedRows += 1;
   }
-  return false;
+
+  return changedRows;
+}
+
+async function rerouteSessionsFromDeletedNode(tenantId, deletedNode, fallbackNode) {
+  const sessions = await query(
+    `SELECT id, conversation_id, context, status
+     FROM flow_sessions
+     WHERE tenant_id = ? AND current_node_key = ? AND status IN ('active', 'escalated')`,
+    [tenantId, deletedNode.node_key]
+  );
+
+  let rerouted = 0;
+  let abandoned = 0;
+
+  for (const session of sessions) {
+    const context = parseJson(session.context, {});
+    context.pending_input_for = null;
+    context.last_error = `Nodo eliminado manualmente: ${deletedNode.node_key}`;
+
+    if (fallbackNode?.node_key) {
+      const history = Array.isArray(context.history) ? context.history : [];
+      context.history = [...history, buildHistoryEntry(fallbackNode)];
+
+      await query(
+        `UPDATE flow_sessions
+         SET current_node_key = ?, status = 'active', context = ?, updated_at = NOW()
+         WHERE tenant_id = ? AND id = ?`,
+        [fallbackNode.node_key, serializeJson(context), tenantId, Number(session.id)]
+      );
+      await query(
+        `UPDATE conversations
+         SET current_phase = ?, status = 'active', inbox_state = 'open', escalation_reason = NULL
+         WHERE tenant_id = ? AND id = ?`,
+        [fallbackNode.node_key, tenantId, Number(session.conversation_id)]
+      );
+      rerouted += 1;
+    } else {
+      await query(
+        `UPDATE flow_sessions
+         SET status = 'abandoned', context = ?, updated_at = NOW()
+         WHERE tenant_id = ? AND id = ?`,
+        [serializeJson(context), tenantId, Number(session.id)]
+      );
+      await query(
+        `UPDATE conversations
+         SET current_phase = NULL
+         WHERE tenant_id = ? AND id = ?`,
+        [tenantId, Number(session.conversation_id)]
+      );
+      abandoned += 1;
+    }
+
+    broadcast('funnel_session_update', { id: Number(session.id), reason: 'flow-node-deleted' }, tenantId);
+    broadcast('conversation:change', { id: Number(session.conversation_id), reason: 'flow-node-deleted' }, tenantId);
+  }
+
+  return { rerouted, abandoned };
 }
 
 router.get('/control', authMiddleware, tenantMiddleware, async (req, res) => {
@@ -163,8 +288,8 @@ router.post('/nodes', authMiddleware, tenantMiddleware, requireManager, async (r
     const result = await query(
       `INSERT INTO flow_nodes (
          tenant_id, node_key, name, type, message_text, ai_system_prompt, keywords, options,
-         next_node_key, keyword_match_next, keyword_nomatch_next, capture_field, action_type, position, active
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         next_node_key, keyword_match_next, keyword_nomatch_next, capture_field, action_type, position, send_delay_seconds, active
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         req.tenantId,
         payload.node_key,
@@ -180,6 +305,7 @@ router.post('/nodes', authMiddleware, tenantMiddleware, requireManager, async (r
         payload.capture_field,
         payload.action_type,
         payload.position,
+        payload.send_delay_seconds,
         payload.active,
       ]
     );
@@ -215,7 +341,7 @@ router.put('/nodes/:id', authMiddleware, tenantMiddleware, requireManager, async
       `UPDATE flow_nodes
        SET name = ?, type = ?, message_text = ?, ai_system_prompt = ?, keywords = ?, options = ?,
            next_node_key = ?, keyword_match_next = ?, keyword_nomatch_next = ?, capture_field = ?, action_type = ?,
-           position = ?, active = ?
+           position = ?, send_delay_seconds = ?, active = ?
        WHERE tenant_id = ? AND id = ?`,
       [
         payload.name,
@@ -230,6 +356,7 @@ router.put('/nodes/:id', authMiddleware, tenantMiddleware, requireManager, async
         payload.capture_field,
         payload.action_type,
         payload.position,
+        payload.send_delay_seconds,
         payload.active,
         req.tenantId,
         Number(req.params.id),
@@ -255,26 +382,33 @@ router.delete('/nodes/:id', authMiddleware, tenantMiddleware, requireManager, as
       return res.status(404).json({ error: 'Nodo no encontrado' });
     }
 
-    const referenced = await isNodeReferenced(req.tenantId, node.node_key, node.id);
-    if (referenced) {
-      return res.status(400).json({ error: 'No puedes eliminar este nodo porque está referenciado por otro nodo' });
-    }
-
-    const activeSessions = await query(
-      `SELECT COUNT(*) AS total
-       FROM flow_sessions
-       WHERE tenant_id = ? AND current_node_key = ? AND status IN ('active', 'escalated')`,
-      [req.tenantId, node.node_key]
+    const fallbackCandidates = await query(
+      `SELECT node_key, name, type
+       FROM flow_nodes
+       WHERE tenant_id = ? AND id <> ? AND active = TRUE
+       ORDER BY CASE WHEN node_key = ? THEN 0 ELSE 1 END, position ASC, id ASC
+       LIMIT 1`,
+      [req.tenantId, Number(req.params.id), node.next_node_key || '']
     );
-    if (Number(activeSessions?.[0]?.total || 0) > 0) {
-      return res.status(400).json({ error: 'No puedes eliminar este nodo porque hay sesiones activas usándolo' });
-    }
+    const fallbackNode = fallbackCandidates[0] || null;
+    const detachedReferences = await cleanupReferencesToNode(
+      req.tenantId,
+      node.node_key,
+      fallbackNode?.node_key || null
+    );
+    const sessionImpact = await rerouteSessionsFromDeletedNode(req.tenantId, node, fallbackNode);
 
     await query(
       'DELETE FROM flow_nodes WHERE tenant_id = ? AND id = ?',
       [req.tenantId, Number(req.params.id)]
     );
-    res.json({ success: true });
+    res.json({
+      success: true,
+      detached_references: detachedReferences,
+      rerouted_sessions: sessionImpact.rerouted,
+      abandoned_sessions: sessionImpact.abandoned,
+      fallback_node_key: fallbackNode?.node_key || null,
+    });
   } catch (err) {
     console.error('[funnel nodes DELETE]', err);
     res.status(500).json({ error: 'Error eliminando nodo' });

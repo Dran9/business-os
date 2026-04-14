@@ -25,6 +25,7 @@ const { isFunnelPaused } = require('../funnelControl');
 const INTERACTIVE_NODE_TYPES = new Set(['open_question_ai', 'open_question_detect', 'options', 'capture_data']);
 const TELEGRAM_BUTTON_PREFIX = 'option:';
 const CONSTELLATION_DEFAULT_LIMIT = 7;
+const MAX_NODE_DELAY_SECONDS = 120;
 const TEXT_BUFFER_SEPARATOR = '\n';
 const TEXT_BUFFER_BY_CONVERSATION = new Map();
 
@@ -135,6 +136,33 @@ function getCurrentNodeEnteredAt(context) {
 function getResponsePreview(response) {
   if (!response) return '';
   return response.text || response.caption || '';
+}
+
+function normalizeNodeDelaySeconds(value) {
+  const numeric = Number(value ?? 0);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(MAX_NODE_DELAY_SECONDS, Math.round(numeric)));
+}
+
+function buildNodeResponseMetadata(node, extra = null) {
+  return {
+    flow_node_key: node?.node_key || null,
+    flow_type: node?.type || null,
+    send_delay_seconds: normalizeNodeDelaySeconds(node?.send_delay_seconds),
+    ...(extra || {}),
+  };
+}
+
+function getResponseDelaySeconds(response) {
+  return normalizeNodeDelaySeconds(
+    response?.send_delay_seconds
+      ?? response?.metadata?.send_delay_seconds
+      ?? 0
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function getLeadById(tenantId, leadId) {
@@ -871,6 +899,20 @@ async function sendResponses(channelAdapter, recipientTarget, conversationId, te
       break;
     }
 
+    const delaySeconds = getResponseDelaySeconds(response);
+    if (delaySeconds > 0) {
+      const waitUntil = Date.now() + (delaySeconds * 1000);
+      while (Date.now() < waitUntil) {
+        const pausedDuringWait = await isFunnelPaused(tenantId).catch(() => false);
+        if (pausedDuringWait) {
+          return sentCount;
+        }
+        const remainingMs = waitUntil - Date.now();
+        if (remainingMs <= 0) break;
+        await sleep(Math.min(remainingMs, 1000));
+      }
+    }
+
     let sent = null;
 
     if (response.type === 'image') {
@@ -905,7 +947,10 @@ async function sendResponses(channelAdapter, recipientTarget, conversationId, te
       content: getResponsePreview(response),
       messageId: sent?.messageId || '',
       contentType: response.type === 'image' ? 'image' : 'text',
-      metadata: response.metadata || null,
+      metadata: {
+        ...(response.metadata || {}),
+        send_delay_seconds: delaySeconds,
+      },
     });
     sentCount += 1;
   }
@@ -1252,7 +1297,7 @@ async function runFlowEngine({
       responses.push({
         type: 'text',
         text: renderedText,
-        metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+        metadata: buildNodeResponseMetadata(currentNode),
       });
 
       const nextNode = await transitionSessionToNode({
@@ -1304,11 +1349,7 @@ async function runFlowEngine({
       if (actionResult.responses?.length) {
         responses.push(...actionResult.responses.map((item) => ({
           ...item,
-          metadata: {
-            ...(item.metadata || {}),
-            flow_node_key: currentNode.node_key,
-            flow_type: currentNode.type,
-          },
+          metadata: buildNodeResponseMetadata(currentNode, item.metadata || {}),
         })));
       }
 
@@ -1364,13 +1405,13 @@ async function runFlowEngine({
             id: buildOptionButtonId(currentNode.node_key, index),
             label: option.label,
           })),
-          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+          metadata: buildNodeResponseMetadata(currentNode),
         });
       } else {
         responses.push({
           type: 'text',
           text: promptText,
-          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+          metadata: buildNodeResponseMetadata(currentNode),
         });
       }
 
@@ -1434,7 +1475,7 @@ async function runFlowEngine({
         responses.push({
           type: 'text',
           text: aiReply,
-          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+          metadata: buildNodeResponseMetadata(currentNode),
         });
       }
 
@@ -1521,12 +1562,12 @@ async function runFlowEngine({
         responses.push({
           type: 'text',
           text: validation.error,
-          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+          metadata: buildNodeResponseMetadata(currentNode),
         });
         responses.push({
           type: 'text',
           text: resolveMessageText(currentNode.message_text, context, workshop, lead, conversation),
-          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+          metadata: buildNodeResponseMetadata(currentNode),
         });
         context.pending_input_for = currentNode.node_key;
         await updateFlowSession(session.id, { context });
@@ -1615,7 +1656,7 @@ async function runFlowEngine({
             id: buildOptionButtonId(currentNode.node_key, index),
             label: option.label,
           })),
-          metadata: { flow_node_key: currentNode.node_key, flow_type: currentNode.type },
+          metadata: buildNodeResponseMetadata(currentNode),
         });
         context.pending_input_for = currentNode.node_key;
         await updateFlowSession(session.id, { context });

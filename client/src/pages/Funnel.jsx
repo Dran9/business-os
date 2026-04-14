@@ -70,6 +70,7 @@ const CAPTURE_FIELDS = [
 const CAPTURE_FIELD_LABEL = Object.fromEntries(CAPTURE_FIELDS.map((field) => [field.value, field.label]))
 
 const HARDCODED_KEYS = ['nodo_09_sin_cupos', 'nodo_10_espera_pago']
+const MAX_SEND_DELAY_SECONDS = 120
 
 const SESSION_STATUS_LABELS = {
   active: 'Activa',
@@ -109,6 +110,12 @@ function keywordsToText(value) {
   return normalizeKeywords(value).join(', ')
 }
 
+function clampSendDelaySeconds(value) {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.max(0, Math.min(MAX_SEND_DELAY_SECONDS, Math.round(numeric)))
+}
+
 function normalizeOptions(value) {
   if (!Array.isArray(value)) return []
   return value.map((opt) => ({
@@ -132,6 +139,7 @@ function normalizeNode(raw) {
     capture_field: raw.capture_field || '',
     action_type: raw.action_type || '',
     position: Number(raw.position || 0),
+    send_delay_seconds: clampSendDelaySeconds(raw.send_delay_seconds),
     active: raw.active !== false,
   }
 }
@@ -151,6 +159,7 @@ function buildPayload(node) {
     capture_field: null,
     action_type: null,
     position: Number(node.position || 0),
+    send_delay_seconds: clampSendDelaySeconds(node.send_delay_seconds),
     active: node.active !== false,
   }
   if (node.type === 'open_question_ai') {
@@ -206,6 +215,8 @@ const ICONS = {
   'qr-code': <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M20 14h1"/><path d="M14 20h3"/><path d="M20 17v4"/></>,
   'scan-line': <><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></>,
   'bell-ring': <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/><path d="M22 8c0-2.3-.8-4.3-2-6"/></>,
+  'copy': <><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+  'clock-3': <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
 }
 
 function IconConfirmButton({ onConfirm }) {
@@ -474,10 +485,42 @@ export default function Funnel() {
     }
   }, [nodes])
 
+  const handleDuplicateNode = useCallback(async (node) => {
+    setSaveError('')
+    const duplicateKey = generateNodeKey(nodes)
+    const fallbackName = node.name || node.node_key || 'Paso'
+    const payload = {
+      ...buildPayload({
+        ...node,
+        node_key: duplicateKey,
+        name: `${fallbackName} (copia)`,
+        position: Number(node.position || 0) + 1,
+      }),
+      node_key: duplicateKey,
+    }
+
+    try {
+      const created = await apiPost('/api/funnel/nodes', payload)
+      const normalized = normalizeNode(created)
+      setNodes((prev) => {
+        const next = [...prev, normalized]
+        next.sort((a, b) => Number(a.position || 0) - Number(b.position || 0) || Number(a.id || 0) - Number(b.id || 0))
+        return next
+      })
+      setActivePillId(normalized.id)
+      setTimeout(() => {
+        const el = document.getElementById(`fnl-card-${normalized.id}`)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 50)
+    } catch (err) {
+      setSaveError(err.message || 'No se pudo duplicar el paso')
+    }
+  }, [nodes])
+
   const handleDeleteNode = useCallback(async (node) => {
     setSaveError('')
     try {
-      await apiDelete(`/api/funnel/nodes/${node.id}`)
+      const result = await apiDelete(`/api/funnel/nodes/${node.id}`)
       const remaining = nodes.filter((n) => n.id !== node.id)
       setNodes(remaining)
       if (activePillId === node.id) {
@@ -488,8 +531,18 @@ export default function Funnel() {
         next.delete(node.id)
         return next
       })
+      if (result?.rerouted_sessions || result?.abandoned_sessions || result?.detached_references) {
+        setSaveToast([
+          result.detached_references ? `${result.detached_references} referencia(s) ajustada(s)` : null,
+          result.rerouted_sessions ? `${result.rerouted_sessions} sesión(es) redirigida(s)` : null,
+          result.abandoned_sessions ? `${result.abandoned_sessions} sesión(es) cerrada(s)` : null,
+        ].filter(Boolean).join(' · '))
+        setTimeout(() => setSaveToast(''), 2800)
+      }
     } catch (err) {
-      setSaveError(err.message || 'No se pudo eliminar el paso')
+      const message = err.message || 'No se pudo eliminar el paso'
+      setSaveError(message)
+      window.alert(message)
     }
   }, [activePillId, nodes])
 
@@ -649,6 +702,7 @@ export default function Funnel() {
           setActivePillId={setActivePillId}
           updateNode={updateNode}
           onAddNode={handleAddNode}
+          onDuplicateNode={handleDuplicateNode}
           onDeleteNode={handleDeleteNode}
           onMoveNode={handleMoveNode}
           onSaveAll={handleSaveAll}
@@ -684,6 +738,7 @@ function FlowEditor({
   setActivePillId,
   updateNode,
   onAddNode,
+  onDuplicateNode,
   onDeleteNode,
   onMoveNode,
   onSaveAll,
@@ -797,6 +852,7 @@ function FlowEditor({
                   nodes={nodes}
                   dirty={dirtyIds.has(n.id)}
                   updateNode={updateNode}
+                  onDuplicate={() => onDuplicateNode(n)}
                   onDelete={() => onDeleteNode(n)}
                   onMoveUp={() => onMoveNode(n.id, 'up')}
                   onMoveDown={() => onMoveNode(n.id, 'down')}
@@ -825,7 +881,7 @@ function FlowEditor({
 // ══════════════════════════════════════════════════════════════════════════
 //   NODE CARD
 // ══════════════════════════════════════════════════════════════════════════
-function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMoveUp, onMoveDown }) {
+function NodeCard({ node, index, total, nodes, dirty, updateNode, onDuplicate, onDelete, onMoveUp, onMoveDown }) {
   // Secciones expandibles
   const [openSend, setOpenSend] = useState(true)
   const [openProcess, setOpenProcess] = useState(false)
@@ -964,6 +1020,18 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
           {node.node_key}
         </span>
         <div className="fnl-card-badges">{badges}</div>
+        <label className="fnl-delay-chip" title={`Retraso antes de enviar (0-${MAX_SEND_DELAY_SECONDS} segundos)`}>
+          <Icon name="clock-3" size={12} />
+          <input
+            type="number"
+            min={0}
+            max={MAX_SEND_DELAY_SECONDS}
+            step={1}
+            value={clampSendDelaySeconds(node.send_delay_seconds)}
+            onChange={(event) => updateNode(node.id, { send_delay_seconds: clampSendDelaySeconds(event.target.value) })}
+          />
+          <span>s</span>
+        </label>
         <div className="fnl-card-actions">
           <button
             type="button"
@@ -982,6 +1050,14 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
             onClick={onMoveDown}
           >
             <Icon name="arrow-down" />
+          </button>
+          <button
+            type="button"
+            className="fnl-icon-btn"
+            title="Duplicar paso"
+            onClick={onDuplicate}
+          >
+            <Icon name="copy" />
           </button>
           <IconConfirmButton onConfirm={onDelete} />
         </div>
@@ -1035,6 +1111,9 @@ function NodeCard({ node, index, total, nodes, dirty, updateNode, onDelete, onMo
                 rows={3}
                 onChange={(e) => updateNode(node.id, { message_text: e.target.value })}
               />
+              <div className="fnl-field-hint">
+                El reloj del encabezado define cuántos segundos espera este paso antes de enviar su mensaje.
+              </div>
             </div>
           ) : null}
         </div>

@@ -644,6 +644,7 @@ async function initializeDatabase() {
         capture_field VARCHAR(50),
         action_type VARCHAR(50),
         position INT DEFAULT 0,
+        send_delay_seconds INT DEFAULT 0,
         active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -1009,6 +1010,7 @@ async function initializeDatabase() {
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT TRUE').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS position INT DEFAULT 0').catch(() => {});
     await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS capture_field VARCHAR(50)').catch(() => {});
+    await conn.execute('ALTER TABLE flow_nodes ADD COLUMN IF NOT EXISTS send_delay_seconds INT DEFAULT 0').catch(() => {});
     await conn.execute('ALTER TABLE flow_sessions ADD COLUMN IF NOT EXISTS status ENUM("active", "completed", "escalated", "abandoned") DEFAULT "active"').catch(() => {});
     await conn.execute('ALTER TABLE leads ADD COLUMN IF NOT EXISTS contact_id INT DEFAULT NULL').catch(() => {});
     await conn.execute('ALTER TABLE leads ADD INDEX IF NOT EXISTS idx_contact_id (contact_id)').catch(() => {});

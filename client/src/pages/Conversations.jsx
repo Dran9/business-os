@@ -356,7 +356,7 @@ export default function Conversations() {
   }
 
   return (
-    <div>
+    <div className="conversations-page">
       <div className="flex items-center justify-between gap-2" style={{ flexWrap: 'wrap' }}>
         <h1 className="page-title">Conversaciones</h1>
         <span className={`live-indicator ${connected ? 'connected' : ''}`}>
@@ -566,7 +566,7 @@ export default function Conversations() {
                       <label>Notas internas</label>
                       <textarea
                         className="input textarea"
-                        rows="6"
+                        rows="4"
                         value={noteDraft}
                         onChange={(e) => setNoteDraft(e.target.value)}
                         placeholder="Contexto interno, objeciones, próxima acción..."

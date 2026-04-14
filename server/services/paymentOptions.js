@@ -1,5 +1,9 @@
 const { query } = require('../db');
 
+function isImageMimeType(mimeType) {
+  return /^image\//i.test(String(mimeType || '').trim());
+}
+
 function normalizePaymentOptions(rawValue) {
   let parsed = rawValue;
   if (typeof parsed === 'string') {
@@ -37,7 +41,10 @@ function normalizeDestinationAccounts(value) {
 async function getPaymentSettings(tenantId) {
   const rows = await query(
     `SELECT payment_options, payment_destination_accounts, features_enabled,
-            payment_qr_1, payment_qr_2, payment_qr_3, payment_qr_4
+            payment_qr_1, payment_qr_1_mime,
+            payment_qr_2, payment_qr_2_mime,
+            payment_qr_3, payment_qr_3_mime,
+            payment_qr_4, payment_qr_4_mime
      FROM tenants
      WHERE id = ?
      LIMIT 1`,
@@ -57,7 +64,13 @@ async function getPaymentSettings(tenantId) {
   features = features && typeof features === 'object' ? features : {};
 
   options.forEach((option, idx) => {
-    option.has_qr = !!tenant[`payment_qr_${idx + 1}`];
+    const slot = idx + 1;
+    const mimeType = tenant[`payment_qr_${slot}_mime`];
+    const hasBlob = !!tenant[`payment_qr_${slot}`];
+    const isValidImage = hasBlob && isImageMimeType(mimeType);
+    option.has_qr = isValidImage;
+    option.qr_invalid = hasBlob && !isValidImage;
+    option.qr_mime = mimeType || null;
   });
 
   return {
@@ -68,7 +81,7 @@ async function getPaymentSettings(tenantId) {
 }
 
 async function updatePaymentSettings(tenantId, { payment_options, payment_destination_accounts, payment_proof_debug_mode }) {
-  const options = normalizePaymentOptions(payment_options).map(({ slot, has_qr, ...item }) => item);
+  const options = normalizePaymentOptions(payment_options).map(({ slot, has_qr, qr_invalid, qr_mime, ...item }) => item);
   const accounts = Array.isArray(payment_destination_accounts)
     ? payment_destination_accounts.map((item) => String(item || '').replace(/\D/g, '')).filter(Boolean).join('\n')
     : String(payment_destination_accounts || '')
@@ -123,6 +136,12 @@ async function updatePaymentQrAsset(tenantId, slot, buffer, mimeType) {
   if (![1, 2, 3, 4].includes(Number(slot))) {
     throw new Error('Slot inválido');
   }
+  if (!buffer || !buffer.length) {
+    throw new Error('Archivo QR inválido');
+  }
+  if (!isImageMimeType(mimeType)) {
+    throw new Error('El QR debe ser una imagen válida (PNG/JPG/WebP/etc.)');
+  }
 
   await query(
     `UPDATE tenants
@@ -165,6 +184,7 @@ async function getPaymentOptionBySlot(tenantId, slot) {
 }
 
 module.exports = {
+  isImageMimeType,
   normalizePaymentOptions,
   normalizeDestinationAccounts,
   getPaymentSettings,

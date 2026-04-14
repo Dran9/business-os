@@ -8,6 +8,7 @@ const {
   updatePaymentProofDebugMode,
   updatePaymentQrAsset,
   getPaymentQrAsset,
+  isImageMimeType,
 } = require('../services/paymentOptions');
 const {
   getLlmSettings,
@@ -93,12 +94,16 @@ router.post('/payment-options/:slot/qr', authMiddleware, tenantMiddleware, requi
     if (!req.file) {
       return res.status(400).json({ error: 'Archivo requerido' });
     }
+    if (!isImageMimeType(req.file.mimetype)) {
+      return res.status(400).json({ error: 'El QR debe ser una imagen (PNG/JPG/WebP, etc.)' });
+    }
 
     await updatePaymentQrAsset(req.tenantId, slot, req.file.buffer, req.file.mimetype);
     res.json({ success: true });
   } catch (err) {
     console.error('[settings/payment-options QR POST]', err);
-    res.status(500).json({ error: 'Error subiendo QR' });
+    const status = /qr|imagen|archivo/i.test(String(err.message || '')) ? 400 : 500;
+    res.status(status).json({ error: err.message || 'Error subiendo QR' });
   }
 });
 

@@ -53,6 +53,11 @@ function normalizeText(value) {
   return String(value || '').trim();
 }
 
+function normalizeMessageId(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
 function normalizeInternalWhitespace(value) {
   return normalizeText(value).replace(/\s+/g, ' ');
 }
@@ -193,6 +198,22 @@ async function getConversationById(tenantId, conversationId) {
      WHERE c.tenant_id = ? AND c.id = ?
      LIMIT 1`,
     [tenantId, conversationId]
+  );
+  return rows[0] || null;
+}
+
+async function getExistingInboundMessageByWaId(tenantId, waMessageId) {
+  if (!waMessageId) return null;
+  const rows = await query(
+    `SELECT m.id, m.conversation_id, c.lead_id
+     FROM messages m
+     JOIN conversations c ON c.id = m.conversation_id
+     WHERE c.tenant_id = ?
+       AND m.wa_message_id = ?
+       AND m.direction = 'inbound'
+     ORDER BY m.id DESC
+     LIMIT 1`,
+    [tenantId, waMessageId]
   );
   return rows[0] || null;
 }
@@ -2395,6 +2416,29 @@ async function resumeConversationBot({ tenantId, conversationId, nodeKey = null,
 }
 
 async function processIncomingMessage({ tenantId, incoming, channelAdapter }) {
+  const inboundWaMessageId = normalizeMessageId(incoming?.messageId);
+  const isWhatsAppChannel = (incoming?.channel || channelAdapter?.channelName) === 'whatsapp';
+
+  // Idempotencia defensiva: Meta puede reintentar eventos y no queremos
+  // volver a disparar el embudo ni duplicar respuestas del bot.
+  if (isWhatsAppChannel && inboundWaMessageId) {
+    const existingInbound = await getExistingInboundMessageByWaId(tenantId, inboundWaMessageId);
+    if (existingInbound) {
+      const [lead, conversation] = await Promise.all([
+        getLeadById(tenantId, existingInbound.lead_id),
+        getConversationById(tenantId, existingInbound.conversation_id),
+      ]);
+      return {
+        lead,
+        conversation,
+        session_id: null,
+        responses: [],
+        action_taken: 'duplicate_inbound_ignored',
+        duplicated_message_id: existingInbound.id,
+      };
+    }
+  }
+
   let identity = incoming.identity || null;
   if ((incoming.channel || channelAdapter.channelName) === 'whatsapp' && (!identity || (!identity.id && (identity.phone || identity.bsuid)))) {
     identity = await resolveIdentity({

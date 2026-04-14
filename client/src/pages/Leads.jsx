@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
 import { formatCurrency, formatDate, timeAgo } from '../utils/dates'
@@ -98,6 +98,7 @@ export default function Leads() {
   const deferredSearch = useDeferredValue(search)
   const selection = useSelection()
   const isArchivedView = view === 'archived'
+  const selectedIdRef = useRef(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -185,6 +186,10 @@ export default function Leads() {
     loadAgendaBundle(selectedId)
   }, [loadAgendaBundle, loadLeadDetail, selectedId])
 
+  useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
+
   const { connected } = useAdminEvents({
     'lead:change': (payload) => {
       load()
@@ -203,6 +208,35 @@ export default function Leads() {
       if (selectedId) loadLeadDetail(selectedId)
     },
   })
+
+  useEffect(() => {
+    const intervalMs = connected ? 20000 : 8000
+    const interval = setInterval(() => {
+      if (document.hidden) return
+      load()
+      if (selectedIdRef.current) {
+        loadLeadDetail(selectedIdRef.current)
+        loadAgendaBundle(selectedIdRef.current)
+      }
+    }, intervalMs)
+
+    const onVisibleOrFocus = () => {
+      load()
+      if (selectedIdRef.current) {
+        loadLeadDetail(selectedIdRef.current)
+        loadAgendaBundle(selectedIdRef.current)
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibleOrFocus)
+    window.addEventListener('focus', onVisibleOrFocus)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibleOrFocus)
+      window.removeEventListener('focus', onVisibleOrFocus)
+    }
+  }, [connected, load, loadAgendaBundle, loadLeadDetail])
 
   const totals = useMemo(() => {
     const transactions = selectedLead?.transactions || []

@@ -5,6 +5,7 @@ const {
   getPaymentOptionBySlot,
   getPaymentQrAsset,
   getPaymentSettings,
+  isImageMimeType,
 } = require('../paymentOptions');
 const { syncWorkshopParticipantCount } = require('../enrollments');
 const { broadcast } = require('../adminEvents');
@@ -172,6 +173,17 @@ async function buildPaymentQrResponse({ tenantId, conversationId, leadId, worksh
   const asset = await getPaymentQrAsset(tenantId, slot);
   if (!asset) {
     return { type: 'text', text: `La opción ${option.label} todavía no tiene QR cargado. Daniel te lo enviará manualmente.` };
+  }
+  if (!isImageMimeType(asset.mime_type)) {
+    console.warn('[payment qr] asset inválido para envío', {
+      tenantId,
+      slot,
+      mimeType: asset.mime_type || null,
+    });
+    return {
+      type: 'text',
+      text: `La opción ${option.label} tiene un QR inválido cargado. Daniel te enviará el cobro manualmente.`,
+    };
   }
 
   const enrollment = await getOrCreateEnrollment({ tenantId, leadId, workshopId });

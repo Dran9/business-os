@@ -2,7 +2,7 @@ import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, use
 import { useSearchParams } from 'react-router-dom'
 import { apiDelete, apiGet, apiPost, apiPut } from '../utils/api'
 import { useAdminEvents } from '../hooks/useAdminEvents'
-import { timeAgo } from '../utils/dates'
+import { formatTime, timeAgo } from '../utils/dates'
 import ConfirmButton from '../components/ui/ConfirmButton'
 import BulkActionBar from '../components/ui/BulkActionBar'
 import useSelection from '../hooks/useSelection'
@@ -597,11 +597,7 @@ export default function Conversations() {
                           <div className="chat-bubble-meta">
                             {renderSenderLabel(message, selected)}
                             {' · '}
-                            {new Date(message.created_at).toLocaleTimeString('es-BO', {
-                              timeZone: 'America/La_Paz',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                            {formatTime(message.created_at)}
                           </div>
                         </div>
                       ))}

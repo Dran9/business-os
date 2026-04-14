@@ -56,7 +56,7 @@ async function queryPaginated(sql, params = [], { page = 1, limit = 50 } = {}) {
   const dataSql = `${sql} LIMIT ? OFFSET ?`;
 
   const [[{ total }]] = await pool.execute(countSql, params);
-  const [rows] = await pool.execute(dataSql, [...params, String(limit), String(offset)]);
+  const [rows] = await pool.execute(dataSql, [...params, Number(limit), Number(offset)]);
 
   return {
     data: rows,

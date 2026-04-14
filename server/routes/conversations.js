@@ -234,7 +234,7 @@ async function sendConversationText({
     }
   }
 
-  const sent = await adapter.sendText(target, escapeHtml(content));
+  const sent = await adapter.sendText(target, content);
   const outboundBsuid = target && typeof target === 'object' ? target.bsuid || null : null;
 
   const result = await query(

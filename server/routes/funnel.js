@@ -543,13 +543,16 @@ router.put('/sessions/:id/status', authMiddleware, tenantMiddleware, requireMana
         ]
       );
     } else {
+      const newStatus = ['completed', 'abandoned'].includes(nextStatus)
+        ? 'closed'
+        : 'active';
       await query(
         `UPDATE conversations
-         SET status = 'active',
-             assigned_to = 'bot',
+         SET status = ?,
+             assigned_to = CASE WHEN ? = 'closed' THEN 'none' ELSE 'bot' END,
              escalation_reason = NULL
          WHERE tenant_id = ? AND id = ?`,
-        [req.tenantId, session.conversation_id]
+        [newStatus, newStatus, req.tenantId, session.conversation_id]
       );
     }
 

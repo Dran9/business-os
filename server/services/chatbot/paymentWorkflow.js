@@ -322,8 +322,7 @@ async function maybeProcessPaymentProof({ tenantId, conversation, lead, incoming
            amount_paid = ?,
            status = 'confirmed',
            confirmed_at = NOW(),
-           verified_at = NOW(),
-           notes = NULL
+           verified_at = NOW()
        WHERE id = ?`,
       [paymentContext.amount, enrollment.id]
     );

@@ -4,8 +4,7 @@ const { runGroqChat, buildRecentHistoryBlock } = require('./llm');
 const { analyzeAndTagInboundMessage } = require('../analysis/tagger');
 const { recalculateLeadScore } = require('../analysis/scorer');
 const { buildPaymentQrResponse, maybeProcessPaymentProof, runPaymentProofDiagnostic } = require('./paymentWorkflow');
-const { getPaymentSettings } = require('../paymentOptions');
-const { getActivePaymentOptions } = require('../paymentOptions');
+const { getPaymentSettings, getActivePaymentOptions } = require('../paymentOptions');
 const { sendPushinatorNotification } = require('../pushinator');
 const { classifyName } = require('../nameClassifier');
 const { findByPhone } = require('../agendaBridge');
@@ -296,6 +295,18 @@ async function getLatestFlowSession(tenantId, conversationId) {
      ORDER BY updated_at DESC, id DESC
      LIMIT 1`,
     [tenantId, conversationId]
+  );
+  return rows[0] || null;
+}
+
+async function getLatestFlowSessionForLead(tenantId, leadId) {
+  const rows = await query(
+    `SELECT *
+     FROM flow_sessions
+     WHERE tenant_id = ? AND lead_id = ?
+     ORDER BY updated_at DESC, id DESC
+     LIMIT 1`,
+    [tenantId, leadId]
   );
   return rows[0] || null;
 }
@@ -706,7 +717,10 @@ async function createOrUpdateLeadForInbound({
 
   if (!lead && phone) {
     const rows = await query(
-      'SELECT * FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1',
+      `SELECT * FROM leads
+       WHERE tenant_id = ? AND phone = ?
+       ORDER BY (deleted_at IS NULL) DESC, created_at DESC
+       LIMIT 1`,
       [tenantId, phone]
     );
     lead = rows[0] || null;
@@ -1203,7 +1217,9 @@ async function runFlowEngine({
 
   let lead = await getLeadById(tenant_id, lead_id || conversation.lead_id);
   let session = await getActiveFlowSession(tenant_id, conversation_id);
-  const latestSession = session || await getLatestFlowSession(tenant_id, conversation_id);
+  const latestSession = session
+    || await getLatestFlowSession(tenant_id, conversation_id)
+    || (lead_id ? await getLatestFlowSessionForLead(tenant_id, lead_id) : null);
 
   const phone = lead?.phone || incoming?.from || incoming?.senderId || null;
   const waName = lead?.name || incoming?.senderName || null;
@@ -1516,13 +1532,20 @@ async function runFlowEngine({
         return null;
       });
 
-      if (aiReply) {
+      if (!aiReply) {
         responses.push({
           type: 'text',
-          text: aiReply,
+          text: 'Disculpa, tuve un problema procesando tu mensaje. ¿Podrías repetirlo?',
           metadata: buildNodeResponseMetadata(currentNode),
         });
+        break;
       }
+
+      responses.push({
+        type: 'text',
+        text: aiReply,
+        metadata: buildNodeResponseMetadata(currentNode),
+      });
 
       const nextNode = await transitionSessionToNode({
         tenantId: tenant_id,

@@ -53,37 +53,33 @@ export default function App() {
   const { authed, user, login, logout, loading, error } = useAuth()
   const { theme, toggleTheme } = useTheme()
 
-  if (!authed) {
-    return (
-      <BrowserRouter>
-        <Login onLogin={login} loading={loading} error={error} />
-      </BrowserRouter>
-    )
-  }
-
   return (
     <BrowserRouter>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route element={<AdminLayout onLogout={logout} theme={theme} onToggleTheme={toggleTheme} currentUser={user} />}>
-            <Route index element={<Dashboard />} />
-            <Route path="contacts" element={<Contacts />} />
-            <Route path="conversations" element={<Conversations />} />
-            <Route path="funnel" element={<Funnel />} />
-            <Route path="leads" element={<Leads />} />
-            <Route path="commands" element={<Commands />} />
-            <Route path="ai" element={<AI />} />
-            <Route path="asistencia" element={<AttendanceHub />} />
-            <Route path="workshops" element={<Workshops />} />
-            <Route path="taller/:tallerId/asistencia" element={<WorkshopAttendance />} />
-            <Route path="finance" element={<Finance />} />
-            <Route path="marketing" element={<Marketing />} />
-            <Route path="insights" element={<Insights />} />
-            <Route path="settings" element={<Settings currentUser={user} />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </Suspense>
+      {!authed ? (
+        <Login onLogin={login} loading={loading} error={error} />
+      ) : (
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route element={<AdminLayout onLogout={logout} theme={theme} onToggleTheme={toggleTheme} currentUser={user} />}>
+              <Route index element={<Dashboard />} />
+              <Route path="contacts" element={<Contacts />} />
+              <Route path="conversations" element={<Conversations />} />
+              <Route path="funnel" element={<Funnel />} />
+              <Route path="leads" element={<Leads />} />
+              <Route path="commands" element={<Commands />} />
+              <Route path="ai" element={<AI />} />
+              <Route path="asistencia" element={<AttendanceHub />} />
+              <Route path="workshops" element={<Workshops />} />
+              <Route path="taller/:tallerId/asistencia" element={<WorkshopAttendance />} />
+              <Route path="finance" element={<Finance />} />
+              <Route path="marketing" element={<Marketing />} />
+              <Route path="insights" element={<Insights />} />
+              <Route path="settings" element={<Settings currentUser={user} />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </Suspense>
+      )}
     </BrowserRouter>
   )
 }

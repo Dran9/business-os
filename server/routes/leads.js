@@ -6,6 +6,16 @@ const { broadcast } = require('../services/adminEvents');
 
 const router = express.Router();
 
+function parseJson(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
 // GET /api/leads — listar leads
 router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
@@ -100,7 +110,10 @@ router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
     const rows = await query('SELECT * FROM leads WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL', [req.params.id, req.tenantId]);
     if (rows.length === 0) return res.status(404).json({ error: 'Lead no encontrado' });
 
-    const lead = rows[0];
+    const lead = {
+      ...rows[0],
+      metadata: parseJson(rows[0].metadata, {}),
+    };
 
     // Conversaciones del lead
     const conversations = await query(
@@ -181,7 +194,19 @@ router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 80);
 
-    res.json({ ...lead, conversations, tags, enrollments, transactions, timeline });
+    res.json({
+      ...lead,
+      referral: {
+        source_url: lead.metadata?.referral_source_url || null,
+        source_type: lead.metadata?.referral_source_type || null,
+        ad_id: lead.metadata?.referral_ad_id || null,
+      },
+      conversations,
+      tags,
+      enrollments,
+      transactions,
+      timeline,
+    });
   } catch (err) {
     console.error('[leads GET/:id]', err);
     res.status(500).json({ error: 'Error' });

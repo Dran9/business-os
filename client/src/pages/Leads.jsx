@@ -223,6 +223,22 @@ export default function Leads() {
     () => (selectedLead?.conversations || []).find((conversation) => String(conversation.id) === String(resumeConversationId)) || null,
     [resumeConversationId, selectedLead?.conversations]
   )
+  const selectedLeadReferral = useMemo(() => {
+    if (!selectedLead) return null
+    const metadata = parseLeadMetadata(selectedLead.metadata)
+    const referral = selectedLead.referral && typeof selectedLead.referral === 'object' ? selectedLead.referral : {}
+    const sourceUrl = referral.source_url || metadata.referral_source_url || null
+    const sourceType = referral.source_type || metadata.referral_source_type || null
+    const adId = referral.ad_id || metadata.referral_ad_id || null
+    const platform = detectLeadPlatform(selectedLead.source, sourceUrl)
+    if (!sourceUrl && !sourceType && !adId && !platform) return null
+    return {
+      sourceUrl,
+      sourceType,
+      adId,
+      platform,
+    }
+  }, [selectedLead])
 
   useEffect(() => {
     const conversations = selectedLead?.conversations || []
@@ -471,6 +487,23 @@ export default function Leads() {
                     <LeadMeta label="Ingresos" value={formatCurrency(totals.income)} />
                     <LeadMeta label="Inscripciones" value={String(selectedLead.enrollments?.length || 0)} />
                   </div>
+                  {selectedLeadReferral ? (
+                    <div className="mt-4">
+                      <div className="text-sm font-semibold">Origen botón Meta</div>
+                      <div className="text-sm text-secondary mt-1">
+                        {selectedLeadReferral.platform ? `Plataforma: ${selectedLeadReferral.platform}` : 'Plataforma: no detectada'}
+                      </div>
+                      <div className="text-sm text-secondary">
+                        {selectedLeadReferral.sourceType ? `Tipo: ${selectedLeadReferral.sourceType}` : 'Tipo: —'}
+                      </div>
+                      <div className="text-sm text-secondary">
+                        {selectedLeadReferral.adId ? `Ad ID: ${selectedLeadReferral.adId}` : 'Ad ID: —'}
+                      </div>
+                      <div className="text-sm text-secondary">
+                        {selectedLeadReferral.sourceUrl ? `URL: ${selectedLeadReferral.sourceUrl}` : 'URL: —'}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-4">
                     <div className="text-sm font-semibold">Reanudar bot</div>
                     {(selectedLead.conversations || []).length === 0 ? (
@@ -815,6 +848,27 @@ function timelineTime(value) {
   if (!value) return '—'
   const date = new Date(value)
   return `${formatDate(date)} · ${date.toLocaleTimeString('es-BO', { timeZone: 'America/La_Paz', hour: '2-digit', minute: '2-digit' })}`
+}
+
+function parseLeadMetadata(value) {
+  if (!value) return {}
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return {}
+  }
+}
+
+function detectLeadPlatform(source, sourceUrl) {
+  const normalizedSource = String(source || '').toLowerCase()
+  if (normalizedSource === 'instagram') return 'Instagram'
+  if (normalizedSource === 'facebook') return 'Facebook'
+
+  const normalizedUrl = String(sourceUrl || '').toLowerCase()
+  if (normalizedUrl.includes('instagram.com')) return 'Instagram'
+  if (normalizedUrl.includes('facebook.com')) return 'Facebook'
+  return null
 }
 
 function summarizeLeadTags(tags) {

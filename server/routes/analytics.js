@@ -326,7 +326,7 @@ router.get('/lead-profile', authMiddleware, tenantMiddleware, async (req, res) =
          FROM tags t
          JOIN leads l ON l.id = t.target_id AND l.tenant_id = t.tenant_id
          WHERE t.tenant_id=? AND t.target_type='lead' AND l.deleted_at IS NULL
-         GROUP BY category, value ORDER BY total DESC LIMIT 12`,
+         GROUP BY t.category, t.value ORDER BY total DESC LIMIT 12`,
         [tid],
       ),
       query(

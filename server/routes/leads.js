@@ -16,14 +16,19 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+function canManageDeletes(user) {
+  return ['owner', 'admin'].includes(user?.role);
+}
+
 // GET /api/leads — listar leads
 router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
     const { status, source, search, view, page = 1, limit = 50 } = req.query;
-    let sql = 'SELECT * FROM leads WHERE tenant_id = ? AND deleted_at IS NULL';
+    const archivedView = view === 'archived';
+    let sql = `SELECT * FROM leads WHERE tenant_id = ? AND ${archivedView ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'}`;
     const params = [req.tenantId];
 
-    if (view === 'commands_recent') {
+    if (!archivedView && view === 'commands_recent') {
       sql = `
         SELECT l.*
         FROM leads l
@@ -53,20 +58,22 @@ router.get('/', authMiddleware, tenantMiddleware, async (req, res) => {
       sql += ' AND (name LIKE ? OR phone LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
     }
-    if (view === 'hot') {
+    if (!archivedView && view === 'hot') {
       sql += " AND quality_score >= 70 AND status NOT IN ('converted', 'lost')";
     }
-    if (view === 'followup') {
+    if (!archivedView && view === 'followup') {
       sql += " AND status NOT IN ('converted', 'lost') AND last_contact_at IS NOT NULL AND last_contact_at <= DATE_SUB(NOW(), INTERVAL 48 HOUR)";
     }
-    if (view === 'converted') {
+    if (!archivedView && view === 'converted') {
       sql += " AND status = 'converted'";
     }
-    if (view === 'agenda_pending') {
+    if (!archivedView && view === 'agenda_pending') {
       sql += ' AND agenda_client_id IS NULL';
     }
 
-    if (view === 'commands_recent') {
+    if (archivedView) {
+      sql += ' ORDER BY deleted_at DESC, id DESC';
+    } else if (view === 'commands_recent') {
       sql += ' ORDER BY l.last_contact_at DESC, l.id DESC';
     } else {
       sql += ' ORDER BY last_contact_at DESC';
@@ -107,7 +114,13 @@ router.get('/stats/summary', authMiddleware, tenantMiddleware, async (req, res) 
 // GET /api/leads/:id — detalle de un lead con conversaciones
 router.get('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM leads WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL', [req.params.id, req.tenantId]);
+    const includeDeleted = String(req.query?.include_deleted || '') === '1';
+    const rows = await query(
+      `SELECT *
+       FROM leads
+       WHERE id = ? AND tenant_id = ?${includeDeleted ? '' : ' AND deleted_at IS NULL'}`,
+      [req.params.id, req.tenantId]
+    );
     if (rows.length === 0) return res.status(404).json({ error: 'Lead no encontrado' });
 
     const lead = {
@@ -342,6 +355,68 @@ router.delete('/:id', authMiddleware, tenantMiddleware, async (req, res) => {
   } catch (err) {
     console.error('[leads DELETE]', err);
     res.status(500).json({ error: 'Error' });
+  }
+});
+
+// POST /api/leads/:id/restore
+router.post('/:id/restore', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    if (!canManageDeletes(req.user)) {
+      return res.status(403).json({ error: 'No tienes permiso para restaurar leads' });
+    }
+
+    const leadRows = await query(
+      'SELECT id FROM leads WHERE id = ? AND tenant_id = ? AND deleted_at IS NOT NULL LIMIT 1',
+      [req.params.id, req.tenantId]
+    );
+    if (!leadRows[0]) {
+      return res.status(404).json({ error: 'Lead archivado no encontrado' });
+    }
+
+    await query(
+      'UPDATE leads SET deleted_at = NULL WHERE id = ? AND tenant_id = ?',
+      [req.params.id, req.tenantId]
+    );
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'restored' }, req.tenantId);
+    res.json({ message: 'Lead restaurado' });
+  } catch (err) {
+    console.error('[leads restore]', err);
+    res.status(500).json({ error: 'Error restaurando lead' });
+  }
+});
+
+// DELETE /api/leads/:id/hard
+router.delete('/:id/hard', authMiddleware, tenantMiddleware, async (req, res) => {
+  try {
+    if (!canManageDeletes(req.user)) {
+      return res.status(403).json({ error: 'No tienes permiso para eliminar definitivamente leads' });
+    }
+
+    const leadRows = await query(
+      'SELECT id, deleted_at FROM leads WHERE id = ? AND tenant_id = ? LIMIT 1',
+      [req.params.id, req.tenantId]
+    );
+    if (!leadRows[0]) {
+      return res.status(404).json({ error: 'Lead no encontrado' });
+    }
+    if (!leadRows[0].deleted_at) {
+      return res.status(400).json({ error: 'Primero debes archivar el lead antes de eliminarlo definitivamente' });
+    }
+
+    await query(
+      "DELETE FROM tags WHERE tenant_id = ? AND target_type = 'lead' AND target_id = ?",
+      [req.tenantId, Number(req.params.id)]
+    );
+    await query(
+      'DELETE FROM leads WHERE id = ? AND tenant_id = ?',
+      [req.params.id, req.tenantId]
+    );
+
+    broadcast('lead:change', { id: Number(req.params.id), reason: 'hard-deleted' }, req.tenantId);
+    res.json({ message: 'Lead eliminado definitivamente' });
+  } catch (err) {
+    console.error('[leads hard-delete]', err);
+    res.status(500).json({ error: 'Error eliminando definitivamente el lead' });
   }
 });
 

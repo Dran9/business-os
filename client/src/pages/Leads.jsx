@@ -50,6 +50,7 @@ const VIEW_OPTIONS = [
   { value: 'followup', label: 'Sin respuesta 48h' },
   { value: 'converted', label: 'Convertidos' },
   { value: 'agenda_pending', label: 'Sin vínculo Agenda' },
+  { value: 'archived', label: 'Archivados' },
 ]
 
 const TAG_CATEGORIES = [
@@ -96,6 +97,7 @@ export default function Leads() {
   const [tagDraft, setTagDraft] = useState({ category: 'custom', value: '' })
   const deferredSearch = useDeferredValue(search)
   const selection = useSelection()
+  const isArchivedView = view === 'archived'
 
   const load = useCallback(() => {
     setLoading(true)
@@ -119,7 +121,8 @@ export default function Leads() {
       return Promise.resolve()
     }
     setLoadingDetail(true)
-    return apiGet(`/api/leads/${leadId}`)
+    const url = `/api/leads/${leadId}${isArchivedView ? '?include_deleted=1' : ''}`
+    return apiGet(url)
       .then((lead) => {
         startTransition(() => {
           setSelectedLead(lead)
@@ -128,7 +131,7 @@ export default function Leads() {
       })
       .catch(() => setSelectedLead(null))
       .finally(() => setLoadingDetail(false))
-  }, [])
+  }, [isArchivedView])
 
   const loadAgendaBundle = useCallback((leadId) => {
     if (!leadId) {
@@ -239,6 +242,7 @@ export default function Leads() {
       platform,
     }
   }, [selectedLead])
+  const selectedLeadIsArchived = Boolean(selectedLead?.deleted_at)
 
   useEffect(() => {
     const conversations = selectedLead?.conversations || []
@@ -254,6 +258,10 @@ export default function Leads() {
   useEffect(() => {
     setResumeNodeKey('')
   }, [resumeConversationId, selectedLead?.id])
+
+  useEffect(() => {
+    selection.clear()
+  }, [selection, view])
 
   async function handleTagSubmit(event) {
     event.preventDefault()
@@ -311,7 +319,9 @@ export default function Leads() {
   async function handleDeleteLead() {
     if (!selectedId) return
     try {
-      await apiDelete(`/api/leads/${selectedId}`)
+      const hardDelete = isArchivedView || selectedLeadIsArchived
+      const endpoint = hardDelete ? `/api/leads/${selectedId}/hard` : `/api/leads/${selectedId}`
+      await apiDelete(endpoint)
       setSelectedLead(null)
       setSelectedId(null)
       setAgendaBundle(null)
@@ -326,7 +336,8 @@ export default function Leads() {
     const ids = selection.ids()
     if (ids.length === 0) return
     try {
-      await Promise.all(ids.map((id) => apiDelete(`/api/leads/${id}`)))
+      const hardDelete = isArchivedView
+      await Promise.all(ids.map((id) => apiDelete(hardDelete ? `/api/leads/${id}/hard` : `/api/leads/${id}`)))
       if (selectedId && ids.includes(selectedId)) {
         setSelectedLead(null)
         setSelectedId(null)
@@ -334,6 +345,20 @@ export default function Leads() {
         setAgendaMatches([])
       }
       selection.clear()
+      await load()
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
+  async function handleRestoreLead() {
+    if (!selectedId) return
+    try {
+      await apiPost(`/api/leads/${selectedId}/restore`, {})
+      setSelectedLead(null)
+      setSelectedId(null)
+      setAgendaBundle(null)
+      setAgendaMatches([])
       await load()
     } catch (err) {
       alert(err.message)
@@ -402,7 +427,11 @@ export default function Leads() {
       {loading ? (
         <p className="text-muted mt-4">Cargando...</p>
       ) : leads.length === 0 ? (
-        <p className="text-muted mt-4">No hay leads todavía. Llegarán cuando alguien escriba al bot.</p>
+        <p className="text-muted mt-4">
+          {isArchivedView
+            ? 'No hay leads archivados.'
+            : 'No hay leads todavía. Llegarán cuando alguien escriba al bot.'}
+        </p>
       ) : (
         <div className="crm-layout mt-4">
           <div className="table-container card">
@@ -422,7 +451,7 @@ export default function Leads() {
                   <th>Fuente</th>
                   <th>Estado</th>
                   <th>Score</th>
-                  <th>Último contacto</th>
+                  <th>{isArchivedView ? 'Archivado' : 'Último contacto'}</th>
                 </tr>
               </thead>
               <tbody>
@@ -444,9 +473,13 @@ export default function Leads() {
                     <td className="font-semibold">{lead.name || 'Sin nombre'}</td>
                     <td className="text-secondary">{lead.phone}</td>
                     <td className="text-secondary">{lead.source || '-'}</td>
-                    <td><span className={STATUS_CLASSES[lead.status] || 'badge'}>{STATUS_LABELS[lead.status] || lead.status}</span></td>
+                    <td>
+                      <span className={lead.deleted_at ? 'badge' : (STATUS_CLASSES[lead.status] || 'badge')}>
+                        {lead.deleted_at ? 'Archivado' : (STATUS_LABELS[lead.status] || lead.status)}
+                      </span>
+                    </td>
                     <td><ScoreBar score={lead.quality_score || 0} /></td>
-                    <td className="text-muted text-sm">{timeAgo(lead.last_contact_at)}</td>
+                    <td className="text-muted text-sm">{timeAgo(isArchivedView ? lead.deleted_at : lead.last_contact_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -475,10 +508,15 @@ export default function Leads() {
                         {STATUS_LABELS[selectedLead.status] || selectedLead.status}
                       </span>
                       <ConfirmButton
-                        label="Eliminar lead"
-                        confirmLabel="¿Eliminar lead?"
+                        label={selectedLeadIsArchived ? 'Eliminar definitivo' : 'Eliminar lead'}
+                        confirmLabel={selectedLeadIsArchived ? '¿Eliminar definitivamente este lead?' : '¿Eliminar lead?'}
                         onConfirm={handleDeleteLead}
                       />
+                      {selectedLeadIsArchived ? (
+                        <button type="button" className="btn btn-secondary" onClick={handleRestoreLead}>
+                          Restaurar
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <div className="lead-summary-grid">

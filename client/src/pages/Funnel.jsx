@@ -69,7 +69,10 @@ const CAPTURE_FIELDS = [
 
 const CAPTURE_FIELD_LABEL = Object.fromEntries(CAPTURE_FIELDS.map((field) => [field.value, field.label]))
 
-const HARDCODED_KEYS = ['nodo_09_sin_cupos', 'nodo_10_espera_pago']
+const SYSTEM_NODE_DEPENDENCIES = {
+  check_workshop_capacity: ['nodo_09_sin_cupos'],
+  process_payment_proof: ['nodo_10_espera_pago'],
+}
 const MAX_SEND_DELAY_SECONDS = 120
 
 const SESSION_STATUS_LABELS = {
@@ -622,10 +625,18 @@ export default function Funnel() {
     }
   }, [dirtyIds, nodes, savingAll])
 
-  // ── Warnings de nodos hardcoded faltantes ──────────────────────────────
+  // ── Warnings de nodos de sistema faltantes ─────────────────────────────
   const missingHardcoded = useMemo(() => {
     const keys = new Set(nodes.map((n) => n.node_key))
-    return HARDCODED_KEYS.filter((k) => !keys.has(k))
+    const requiredKeys = new Set()
+
+    for (const node of nodes) {
+      if (node.type !== 'action') continue
+      const deps = SYSTEM_NODE_DEPENDENCIES[node.action_type] || []
+      for (const key of deps) requiredKeys.add(key)
+    }
+
+    return Array.from(requiredKeys).filter((k) => !keys.has(k))
   }, [nodes])
 
   // ══════════════════════════════════════════════════════════════════════
